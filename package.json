@@ -1,0 +1,56 @@
+{
+  "name": "ship-skills",
+  "version": "0.2.0",
+  "description": "Modular Agent Skills workflow pack + CLI — 5 core skills: session-start, vision-auto, prompt-guard, api-bridge, ship-check.",
+  "type": "module",
+  "bin": {
+    "ai-ship": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "skills",
+    "templates",
+    "README.md",
+    "LICENSE",
+    "llms.txt"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/G12789/ai-ship.git"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx src/cli.ts",
+    "prepublishOnly": "npm run build && npm run test:smoke",
+    "test": "node --test",
+    "test:smoke": "node scripts/ci-smoke.mjs",
+    "test:e2e": "node scripts/e2e-full.mjs"
+  },
+  "keywords": [
+    "agent-skills",
+    "claude-code",
+    "cursor",
+    "codex",
+    "ai",
+    "developer-tools",
+    "ctxshot",
+    "evaldrift",
+    "mcp",
+    "workflow"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "picocolors": "^1.1.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}
