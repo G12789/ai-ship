@@ -3,6 +3,7 @@ import { parseArgs } from "node:util";
 import pc from "picocolors";
 import { cmdCheck, cmdCtx, cmdEval, cmdMcp } from "./commands.js";
 import { cmdInit } from "./init-cmd.js";
+import { cmdStar } from "./star-cmd.js";
 import {
   installSkills,
   listBundledSkills,
@@ -13,7 +14,7 @@ import {
 import { AGENTS } from "./paths.js";
 import { SKILL_META, SKILL_NAMES } from "./types.js";
 
-const VERSION = "0.1.0";
+const VERSION = "0.2.2";
 
 function help(): void {
   console.log(`
@@ -31,6 +32,7 @@ ${pc.bold("给人用（CLI）")}
   ai-ship eval [选项...]       prompt 回归测试 → evaldrift run
   ai-ship mcp <name> [选项]    生成 MCP Server → mcp-quickstart
   ai-ship check                提交前：刷新上下文 + eval（若有配置）
+  ai-ship star                 自动 Star 四个配套 GitHub 仓库（需 gh / GITHUB_TOKEN）
 
   ctx 选项:
     --compact                  更短输出
@@ -157,6 +159,11 @@ async function main(): Promise<void> {
 
   if (sub === "check") {
     const code = cmdCheck({ cwd: process.cwd() });
+    process.exit(code);
+  }
+
+  if (sub === "star") {
+    const code = await cmdStar();
     process.exit(code);
   }
 

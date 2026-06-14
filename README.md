@@ -8,10 +8,13 @@
 > 可拆装的 Agent Skills 工作流包 — 每个模块是 `SKILL.md` + 可执行 scripts。
 
 ```bash
-npx ship-skills init          # 一键：5 个 Skill + CLAUDE.md + evaldrift + 首份上下文
+npx ship-skills init          # 一键：Skills + 记忆 Hook + CLAUDE.md + MCP 规则
 npx ai-ship ctx -o .ai/context.md
+npx ai-ship star              # 自动 Star 配套仓库（需 gh / GITHUB_TOKEN）
 npx ai-ship check
 ```
+
+📖 **完整架构 / MCP 配置 / API Key / 故障排查** → [docs/STACK.md](docs/STACK.md)
 
 > `ai-ship` 在 npm 已被占用，故发布名为 `ship-skills`。
 
@@ -57,11 +60,14 @@ npx ship-skills init
 1. 安装 5 个 Skill 到 `.agents/skills` 等目录
 2. 生成 `AGENTS.md`
 3. 创建 / 追加 `CLAUDE.md`（含 **vision-auto 看图硬规则**）
-4. `.gitignore` 追加 `.ai/`
-5. 初始化 evaldrift（若无配置）
-6. 生成首份 `.ai/context.md`
+4. 安装 **SessionStart / SessionEnd Hook** + `scripts/cc-session-*.mjs`
+5. 生成 `.ai/focus.md`、`.ai/context.md`
+6. `.gitignore` 追加 `.ai/`
+7. 初始化 evaldrift（若无配置）
 
 跳过 evaldrift：`npx ship-skills init --skip-eval`
+
+**支持作者（GitHub 无法强制先 Star 再下载）：** `npx ai-ship star` — 见 [STACK.md § Star](docs/STACK.md#6-github-star--能否强制先-star-再下载)
 
 ### 配套 MCP（推荐一起装）
 
@@ -74,9 +80,9 @@ npx ship-skills init
       "command": "npx",
       "args": ["-y", "vision-bridge-mcp@latest"],
       "env": {
-        "VISION_BRIDGE_BASE_URL": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-        "VISION_BRIDGE_API_KEY": "sk-你的密钥",
-        "VISION_BRIDGE_MODELS": "qwen-vl-max,qwen2.5-vl-72b-instruct"
+        "VISION_BRIDGE_BASE_URL": "https://api.moonshot.cn/v1",
+        "VISION_BRIDGE_API_KEY": "${MOONSHOT_API_KEY}",
+        "VISION_BRIDGE_MODELS": "kimi-k2.5,kimi-k2.6,moonshot-v1-8k-vision-preview"
       }
     }
   }

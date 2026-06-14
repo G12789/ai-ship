@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync, appendFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, appendFileSync, mkdirSync, copyFileSync } from "node:fs";
 import { join } from "node:path";
 import pc from "picocolors";
 import { cmdCtx, cmdInitDeps, ensureGitignoreAi } from "./commands.js";
@@ -30,6 +30,37 @@ function ensureClaudeVisionRules(cwd: string): void {
   console.log(pc.green("已生成 CLAUDE.md（含 vision-auto 规则）"));
 }
 
+function ensureClaudeHooks(cwd: string): void {
+  const scriptsDir = join(cwd, "scripts");
+  const claudeDir = join(cwd, ".claude");
+  mkdirSync(scriptsDir, { recursive: true });
+  mkdirSync(claudeDir, { recursive: true });
+
+  const tplScript = (name: string) =>
+    join(PKG_ROOT, "templates", "scripts", name);
+  for (const name of ["cc-session-start.ps1", "cc-on-image-prompt.ps1"]) {
+    const src = tplScript(name);
+    const dest = join(scriptsDir, name);
+    if (!existsSync(src)) continue;
+    copyFileSync(src, dest);
+    console.log(pc.dim(`已安装 scripts/${name}`));
+  }
+
+  const settingsPath = join(claudeDir, "settings.json");
+  const tplSettings = join(PKG_ROOT, "templates", "claude.settings.hooks.json");
+  if (existsSync(tplSettings)) {
+    let json = readFileSync(tplSettings, "utf8");
+    const rootEsc = cwd.replace(/\\/g, "\\\\");
+    json = json.replace(/\{\{PROJECT_ROOT\}\}/g, rootEsc);
+    if (!existsSync(settingsPath)) {
+      writeFileSync(settingsPath, json, "utf8");
+      console.log(pc.green("已生成 .claude/settings.json（SessionStart + 贴图 Hook）"));
+    } else {
+      console.log(pc.dim(".claude/settings.json 已存在，跳过"));
+    }
+  }
+}
+
 export interface InitOptions {
   cwd: string;
   global: boolean;
@@ -52,6 +83,17 @@ export function cmdInit(opts: InitOptions): number {
 
   ensureClaudeVisionRules(opts.cwd);
 
+  if (!existsSync(join(opts.cwd, ".ai", "focus.md"))) {
+    writeFileSync(
+      join(opts.cwd, ".ai", "focus.md"),
+      "# 当前焦点\n\n_在此写「正在做什么」和「下次继续」。_\n",
+      "utf8",
+    );
+    console.log(pc.green("已生成 .ai/focus.md"));
+  }
+
+  ensureClaudeHooks(opts.cwd);
+
   if (!opts.skipEval) {
     const code = cmdInitDeps(opts.cwd);
     if (code !== 0) return code;
@@ -71,6 +113,8 @@ export function cmdInit(opts: InitOptions): number {
 
   console.log(pc.green("\n✓ init 完成"));
   console.log(pc.dim("日常：npx ship-skills ctx -o .ai/context.md"));
+  console.log(pc.dim("支持作者：npx ai-ship star  （需 gh auth 或 GITHUB_TOKEN）"));
+  console.log(pc.dim("完整文档：docs/STACK.md"));
   console.log(pc.dim("改 prompt 后：npx ship-skills eval"));
   console.log(pc.dim("提交前：npx ship-skills check"));
   if (existsSync(join(opts.cwd, "evaldrift.config.yaml"))) {
