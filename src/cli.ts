@@ -14,7 +14,7 @@ import {
 import { AGENTS } from "./paths.js";
 import { SKILL_META, SKILL_NAMES } from "./types.js";
 
-const VERSION = "0.2.3";
+const VERSION = "0.2.4";
 
 function help(): void {
   console.log(`
@@ -101,6 +101,10 @@ async function main(): Promise<void> {
       global: values.global ?? false,
       skipEval: values["skip-eval"] ?? false,
     });
+    if (code === 0) {
+      console.log(pc.dim("\n若已 gh auth login，自动 Star 配套仓库…"));
+      await cmdStar();
+    }
     process.exit(code);
   }
 
