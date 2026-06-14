@@ -6,6 +6,8 @@ export const STAR_REPOS = [
   "G12789/ctxshot-mcp",
   "G12789/vision-bridge-mcp",
   "G12789/ai-ship",
+  "G12789/evaldrift",
+  "G12789/mcp-quickstart",
 ] as const;
 
 async function starOne(token: string, full: string): Promise<boolean> {

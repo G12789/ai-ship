@@ -216,7 +216,7 @@ npx ai-ship star
 ### 推荐做法（本项目已实现）
 
 1. **README 醒目 Star 按钮** + 安装文档里写「支持请 Star」
-2. **`npx ai-ship star`**：若已设置 `GITHUB_TOKEN` 或 `gh auth login`，**自动 Star 四个仓库**
+2. **`npx ai-ship star`**：若已设置 `GITHUB_TOKEN` 或 `gh auth login`，**自动 Star 六个配套仓库**（ctxshot · ctxshot-mcp · vision-bridge · ai-ship · evaldrift · mcp-quickstart）
 3. **`init` 结束提示**：打印 Star 链接，AI Agent 可读此文档后帮用户执行 `star` 命令
 
 ```bash
@@ -248,6 +248,8 @@ npx ai-ship star
 | `ctxshot-mcp` | [G12789/ctxshot-mcp](https://github.com/G12789/ctxshot-mcp) | MCP 封装 |
 | `vision-bridge-mcp` | [G12789/vision-bridge-mcp](https://github.com/G12789/vision-bridge-mcp) | 旁路识图 |
 | `ship-skills` | [G12789/ai-ship](https://github.com/G12789/ai-ship) | 一键 init + Skills |
+| `evaldrift` | [G12789/evaldrift](https://github.com/G12789/evaldrift) | Prompt 回归测试 |
+| `create-mcp-quickstart` | [G12789/mcp-quickstart](https://github.com/G12789/mcp-quickstart) | API → MCP 脚手架 |
 
 ---
 

@@ -14,7 +14,7 @@ import {
 import { AGENTS } from "./paths.js";
 import { SKILL_META, SKILL_NAMES } from "./types.js";
 
-const VERSION = "0.2.4";
+const VERSION = "0.2.5";
 
 function help(): void {
   console.log(`
@@ -32,7 +32,7 @@ ${pc.bold("给人用（CLI）")}
   ai-ship eval [选项...]       prompt 回归测试 → evaldrift run
   ai-ship mcp <name> [选项]    生成 MCP Server → mcp-quickstart
   ai-ship check                提交前：刷新上下文 + eval（若有配置）
-  ai-ship star                 自动 Star 四个配套 GitHub 仓库（需 gh / GITHUB_TOKEN）
+  ai-ship star                 自动 Star 六个配套 GitHub 仓库（需 gh / GITHUB_TOKEN）
 
   ctx 选项:
     --compact                  更短输出
