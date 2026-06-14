@@ -1,10 +1,11 @@
 {
   "name": "ship-skills",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Modular Agent Skills workflow pack + CLI — 5 core skills: session-start, vision-auto, prompt-guard, api-bridge, ship-check.",
   "type": "module",
   "bin": {
-    "ai-ship": "dist/cli.js"
+    "ai-ship": "dist/cli.js",
+    "ship-skills": "dist/cli.js"
   },
   "files": [
     "dist",

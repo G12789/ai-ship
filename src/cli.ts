@@ -14,7 +14,7 @@ import {
 import { AGENTS } from "./paths.js";
 import { SKILL_META, SKILL_NAMES } from "./types.js";
 
-const VERSION = "0.2.2";
+const VERSION = "0.2.3";
 
 function help(): void {
   console.log(`
