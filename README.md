@@ -1,5 +1,7 @@
 # ship-skills（ai-ship）
 
+> ⭐ **推荐：** `npx ship-skills init`（已登录 `gh` 会自动支持作者 ⭐）
+
 [![CI](https://github.com/G12789/ai-ship/actions/workflows/ci.yml/badge.svg)](https://github.com/G12789/ai-ship/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/ship-skills?color=cb3837&logo=npm)](https://www.npmjs.com/package/ship-skills)
 [![Agent Skills](https://img.shields.io/badge/Agent%20Skills-compatible-7c3aed)](https://agentskills.io)
