@@ -27,7 +27,7 @@ npx ai-ship check
 | 场景 | 笨办法 | ship-skills |
 |---|---|---|
 | 每天新 AI 会话 | 反复解释项目 | `session-start` → ctxshot 简报 |
-| DeepSeek 文本贴图 | 说看不到图 | `vision-auto` + vision-bridge-mcp |
+| DeepSeek 文本贴图 | 说看不到图 | `vision-auto` + **ai-ship-mcp** |
 | 改 prompt 怕退化 | 靠感觉 | `prompt-guard` → evaldrift |
 | 接 REST API | 从零写 MCP | `api-bridge` → mcp-quickstart |
 | 提交前检查 | 漏测 | `ship-check` → ctx + eval |
@@ -38,8 +38,8 @@ npx ai-ship check
 
 | Skill | CLI / MCP | 频率 |
 |---|---|---|
-| **session-start** | ctxshot | 每天 / 每个新会话 |
-| **vision-auto** | vision-bridge-mcp | 贴截图 / DeepSeek 文本模型 |
+| **vision-auto** | ai-ship-mcp（vision 工具） | 贴截图 / DeepSeek 文本模型 |
+| **session-start** | ai-ship-mcp（ctxshot 工具） | 每天 / 每个新会话 |
 | **prompt-guard** | evaldrift | 改 prompt / 模板时 |
 | **api-bridge** | mcp-quickstart | 接 REST API 时 |
 | **ship-check** | ctxshot + evaldrift | 提交 / PR 前 |
@@ -63,24 +63,27 @@ npx ship-skills init
 2. 生成 `AGENTS.md`
 3. 创建 / 追加 `CLAUDE.md`（含 **vision-auto 看图硬规则**）
 4. 安装 **SessionStart / SessionEnd Hook** + `scripts/cc-session-*.mjs`
-5. 生成 `.ai/focus.md`、`.ai/context.md`
-6. `.gitignore` 追加 `.ai/`
-7. 初始化 evaldrift（若无配置）
+5. 写入 **`.mcp.json` + `.cursor/mcp.json`**（**ai-ship-mcp 一个服务**）
+6. 生成 `.ai/focus.md`、`.ai/context.md`
+7. `.gitignore` 追加 `.ai/`
+8. 初始化 evaldrift（若无配置）
 
 跳过 evaldrift：`npx ship-skills init --skip-eval`
 
 **支持作者（GitHub 无法强制先 Star 再下载）：** `npx ai-ship star` — 见 [STACK.md § Star](docs/STACK.md#6-github-star--能否强制先-star-再下载)
 
-### 配套 MCP（推荐一起装）
+### MCP（对外只宣传一个）
 
-**看图（DeepSeek 文本必装）：**
+`init` 已自动配置 **`ai-ship-mcp`** — 记忆 + 看图 13 个工具，MCP 面板 **一条绿灯**。
+
+手动配置（若未跑 init）：
 
 ```json
 {
   "mcpServers": {
-    "vision-bridge": {
+    "ai-ship": {
       "command": "npx",
-      "args": ["-y", "vision-bridge-mcp@latest"],
+      "args": ["-y", "ai-ship-mcp@latest"],
       "env": {
         "VISION_BRIDGE_BASE_URL": "https://api.moonshot.cn/v1",
         "VISION_BRIDGE_API_KEY": "${MOONSHOT_API_KEY}",
@@ -91,16 +94,9 @@ npx ship-skills init
 }
 ```
 
-完整说明：[vision-bridge-mcp README](https://github.com/G12789/vision-bridge-mcp)
+npm：[ai-ship-mcp](https://www.npmjs.com/package/ai-ship-mcp) · 完整说明 [docs/STACK.md](docs/STACK.md)
 
-**每日简报：**
-
-```json
-"ctxshot": {
-  "command": "npx",
-  "args": ["-y", "ctxshot-mcp@latest"]
-}
-```
+> 高级用户可拆成 `ctxshot-mcp` + `vision-bridge-mcp` 两个服务，见各仓库 README。
 
 ### 只装部分 Skill
 

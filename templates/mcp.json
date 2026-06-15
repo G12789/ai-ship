@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "ai-ship": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "ai-ship-mcp@latest"],
+      "env": {
+        "VISION_BRIDGE_BASE_URL": "https://api.moonshot.cn/v1",
+        "VISION_BRIDGE_API_KEY": "${MOONSHOT_API_KEY}",
+        "VISION_BRIDGE_MODELS": "kimi-k2.5,kimi-k2.6,moonshot-v1-8k-vision-preview",
+        "VISION_BRIDGE_CACHE": "1"
+      }
+    }
+  }
+}

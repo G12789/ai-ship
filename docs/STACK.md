@@ -16,13 +16,13 @@
    CLAUDE.md            SessionStart Hook      MCP Servers
    @import 三层记忆      (刷新+注入 JSON)        (stdio)
          │                   │                   │
-         ▼                   ▼         ┌─────────┴─────────┐
-  .ai/focus.md          cc-session-    │                   │
-  .ai/handoff.md        start.mjs      ▼                   ▼
-  .ai/context.md                      ctxshot-mcp    vision-bridge-mcp
-         │                               │                   │
-         │                               ▼                   ▼
-         │                          ctxshot CLI         Vision API
+         ▼                   ▼                   ▼
+  .ai/focus.md          cc-session-         ai-ship-mcp（一个 MCP）
+  .ai/handoff.md        start.mjs           ├─ ctxshot 工具×3
+  .ai/context.md            │               └─ vision 工具×10
+         │                  │                   │
+         │                  │                   ▼
+         │                  │              ctxshot CLI + Vision API
          │                          (打包项目)      (Kimi / Qwen-VL / Ollama)
          ▼
    主模型：DeepSeek v4 Pro（文本，看不见像素）
@@ -76,11 +76,36 @@ cd your-project
 npx ship-skills@latest init
 ```
 
-自动完成：5 个 Skill、`.ai/`、`CLAUDE.md`（含 vision 规则）、**SessionStart/End Hook**、首份 `context.md` + `focus.md`。
+自动完成：5 个 Skill、`.ai/`、`CLAUDE.md`（含 vision 规则）、**SessionStart/End Hook**、**`.mcp.json`（ai-ship-mcp 一条）**、首份 `context.md` + `focus.md`。
 
-### 手动装 MCP
+### 手动装 MCP（默认一条即可）
 
-项目根或用户目录创建 `.mcp.json`（Claude Code）或 `~/.cursor/mcp.json`（Cursor）：
+`npx ship-skills init` 已自动写入；手动时项目根创建 `.mcp.json`（Claude Code）或 `.cursor/mcp.json`（Cursor）：
+
+```json
+{
+  "mcpServers": {
+    "ai-ship": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "ai-ship-mcp@latest"],
+      "env": {
+        "VISION_BRIDGE_BASE_URL": "https://api.moonshot.cn/v1",
+        "VISION_BRIDGE_API_KEY": "你的密钥",
+        "VISION_BRIDGE_MODELS": "kimi-k2.5,kimi-k2.6,moonshot-v1-8k-vision-preview",
+        "VISION_BRIDGE_CACHE": "1"
+      }
+    }
+  }
+}
+```
+
+**VS Code**：打开项目文件夹 → 重载窗口 → MCP 面板 **一个** `ai-ship` 服务变绿。
+
+> **高级拆分**（仅需记忆或仅需看图时）：仍可用独立的 `ctxshot-mcp`、`vision-bridge-mcp` 两条配置，见各仓库 README。
+
+<details>
+<summary>旧版双 MCP 配置（仍可用，不推荐对外宣传）</summary>
 
 ```json
 {
@@ -105,7 +130,7 @@ npx ship-skills@latest init
 }
 ```
 
-**VS Code**：打开 `openclaw-deploy` 文件夹 → 重载窗口 → MCP 面板两服务变绿。
+</details>
 
 用户级 DeepSeek 配置在 `~/.claude/settings.json`（`ANTHROPIC_BASE_URL` 指向 DeepSeek 兼容端点）。
 
@@ -244,10 +269,11 @@ npx ai-ship star
 
 | npm 包 | GitHub | 作用 |
 |--------|--------|------|
+| **`ai-ship-mcp`** | [G12789/ai-ship](https://github.com/G12789/ai-ship) | **对外主 MCP**（记忆+看图，装这一个） |
+| `ship-skills` | [G12789/ai-ship](https://github.com/G12789/ai-ship) | 一键 init + Skills + 写 `.mcp.json` |
 | `ctxshot` | [G12789/ctxshot](https://github.com/G12789/ctxshot) | CLI 打包上下文 |
-| `ctxshot-mcp` | [G12789/ctxshot-mcp](https://github.com/G12789/ctxshot-mcp) | MCP 封装 |
-| `vision-bridge-mcp` | [G12789/vision-bridge-mcp](https://github.com/G12789/vision-bridge-mcp) | 旁路识图 |
-| `ship-skills` | [G12789/ai-ship](https://github.com/G12789/ai-ship) | 一键 init + Skills |
+| `ctxshot-mcp` | [G12789/ctxshot-mcp](https://github.com/G12789/ctxshot-mcp) | 仅记忆（拆分用） |
+| `vision-bridge-mcp` | [G12789/vision-bridge-mcp](https://github.com/G12789/vision-bridge-mcp) | 仅看图（拆分用） |
 | `evaldrift` | [G12789/evaldrift](https://github.com/G12789/evaldrift) | Prompt 回归测试 |
 | `create-mcp-quickstart` | [G12789/mcp-quickstart](https://github.com/G12789/mcp-quickstart) | API → MCP 脚手架 |
 
@@ -260,7 +286,7 @@ npx ai-ship star
 | 重启后没记忆 | 确认 `CLAUDE.md` 有 `@import`；首次 import 弹窗点**允许** |
 | 记忆不准 | 维护 `.ai/focus.md`；说「刷新 context」 |
 | MCP 不绿 | `node -v` ≥ 18；检查 JSON 路径与 Key |
-| 贴图不分析 | 装 vision-bridge；`CLAUDE.md` 有看图规则 |
+| 贴图不分析 | 确认 `.mcp.json` 有 `ai-ship-mcp`；`CLAUDE.md` 有看图规则；Key 正确 |
 | handoff Brief 空 | Windows 用 `node` 跑 ctxshot，勿裸 `npx`（路径含空格会炸） |
 
 ---

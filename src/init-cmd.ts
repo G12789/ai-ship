@@ -30,6 +30,37 @@ function ensureClaudeVisionRules(cwd: string): void {
   console.log(pc.green("已生成 CLAUDE.md（含 vision-auto 规则）"));
 }
 
+function ensureMcpJson(cwd: string): void {
+  const tplPath = join(PKG_ROOT, "templates", "mcp.json");
+  if (!existsSync(tplPath)) return;
+
+  const targets = [
+    join(cwd, ".mcp.json"),
+    join(cwd, ".cursor", "mcp.json"),
+  ];
+  const tpl = readFileSync(tplPath, "utf8");
+
+  for (const dest of targets) {
+    const rel = dest.startsWith(cwd) ? dest.slice(cwd.length + 1) : dest;
+    if (existsSync(dest)) {
+      const existing = readFileSync(dest, "utf8");
+      if (existing.includes("ai-ship-mcp")) {
+        console.log(pc.dim(`${rel} 已含 ai-ship-mcp，跳过`));
+        continue;
+      }
+      console.log(
+        pc.yellow(`${rel} 已存在但未配置 ai-ship-mcp，请手动合并或删除后重跑 init`),
+      );
+      continue;
+    }
+    if (dest.includes(".cursor")) {
+      mkdirSync(join(cwd, ".cursor"), { recursive: true });
+    }
+    writeFileSync(dest, tpl, "utf8");
+    console.log(pc.green(`已生成 ${rel}（ai-ship-mcp 一个 MCP 服务）`));
+  }
+}
+
 function ensureClaudeHooks(cwd: string): void {
   const scriptsDir = join(cwd, "scripts");
   const claudeDir = join(cwd, ".claude");
@@ -94,6 +125,8 @@ export function cmdInit(opts: InitOptions): number {
 
   ensureClaudeHooks(opts.cwd);
 
+  ensureMcpJson(opts.cwd);
+
   if (!opts.skipEval) {
     const code = cmdInitDeps(opts.cwd);
     if (code !== 0) return code;
@@ -112,6 +145,7 @@ export function cmdInit(opts: InitOptions): number {
   }
 
   console.log(pc.green("\n✓ init 完成"));
+  console.log(pc.dim("MCP：.mcp.json 已配置 ai-ship-mcp（记忆+看图一个服务）"));
   console.log(pc.dim("日常：npx ship-skills ctx -o .ai/context.md"));
   console.log(pc.dim("支持作者：npx ai-ship star  （需 gh auth 或 GITHUB_TOKEN）"));
   console.log(pc.dim("完整文档：docs/STACK.md"));

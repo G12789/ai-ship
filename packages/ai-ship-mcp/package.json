@@ -1,0 +1,56 @@
+{
+  "name": "ai-ship-mcp",
+  "version": "0.1.0",
+  "description": "One MCP for AI Ship — session memory (ctxshot) + vision bridge. Install this only; ctxshot-mcp & vision-bridge-mcp remain available separately.",
+  "type": "module",
+  "bin": {
+    "ai-ship-mcp": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "exports": {
+    ".": "./dist/index.js",
+    "./register": "./dist/server.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx src/index.ts",
+    "start": "node dist/index.js",
+    "prepublishOnly": "npm run build && npm run test:smoke",
+    "test:smoke": "node scripts/ci-smoke.mjs"
+  },
+  "keywords": [
+    "mcp",
+    "ai-ship",
+    "ctxshot",
+    "vision-bridge",
+    "claude-code",
+    "cursor",
+    "deepseek"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/G12789/ai-ship.git",
+    "directory": "packages/ai-ship-mcp"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "ctxshot-mcp": "^0.1.2",
+    "vision-bridge-mcp": "^0.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}
