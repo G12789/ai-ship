@@ -22,6 +22,32 @@ npx ai-ship check
 
 ---
 
+## 🚀 零基础一键装好整套 IDE（Windows）
+
+不想敲一堆命令？一行装好 **Node + Git + VS Code + Claude Code + DeepSeek 直连 + ai-ship-mcp（记忆+看图）**，全程只在配模型时提示输入 API Key（隐藏输入，录屏不泄密），其余全自动，**无需 ccSwitch**。
+
+先进入你的项目目录，再在 PowerShell 里粘贴运行：
+
+```powershell
+cd D:\my-project
+irm https://raw.githubusercontent.com/G12789/ai-ship/master/install.ps1 | iex
+```
+
+- 已装的组件自动跳过/升级，没装的自动安装
+- 自动写好 `~/.claude/settings.json`（DeepSeek 主模型 + Moonshot 看图旁路）
+- 自动给当前目录配好记忆 Hook / `.mcp.json` / `CLAUDE.md` / `.ai/focus.md`
+- 装系统组件需要管理员权限：建议「以管理员身份运行 PowerShell」后再执行
+
+需要传参数（指定项目路径 / 跳过装系统软件）时，用 scriptblock 形式：
+
+```powershell
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/G12789/ai-ship/master/install.ps1))) -SkipSystemInstall -ProjectPath "D:\my-project"
+```
+
+> 脚本是**单文件自包含**的（模板全部内联），也可下载 [`install.ps1`](install.ps1) 双击运行或 `-File` 调用。📖 细节见 [docs/INSTALL_IDE.md](docs/INSTALL_IDE.md)。
+
+---
+
 ## 解决什么问题
 
 | 场景 | 笨办法 | ship-skills |
