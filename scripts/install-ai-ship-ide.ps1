@@ -14,7 +14,7 @@
   跳过 Node/Git/VS Code/Claude Code 安装（仅配置 Key + 项目）
 
 .PARAMETER OpenVsCode
-  完成后用 VS Code 打开项目目录。
+  完成后自动用 VS Code 打开项目，并直接切到 Claude Code 对话框（默认开启）。
 
 .EXAMPLE
   # 双击运行 或：
@@ -31,7 +31,9 @@ param(
   [string]$DeepseekKey = "",
   [string]$MoonshotKey = "",
   # 测试用：重定向 Claude 用户配置路径（默认 ~/.claude/settings.json）
-  [string]$ClaudeSettingsPath = ""
+  [string]$ClaudeSettingsPath = "",
+  # 测试用：重定向 VS Code 用户配置路径（默认 %APPDATA%\Code\User\settings.json）
+  [string]$VsCodeSettingsPath = ""
 )
 
 Set-StrictMode -Version Latest
@@ -50,6 +52,12 @@ if ($ClaudeSettingsPath) {
 } else {
   $UserClaudeDir = Join-Path $env:USERPROFILE ".claude"
   $UserClaudeSettings = Join-Path $UserClaudeDir "settings.json"
+}
+
+if ($VsCodeSettingsPath) {
+  $UserVsCodeSettings = $VsCodeSettingsPath
+} else {
+  $UserVsCodeSettings = Join-Path $env:APPDATA "Code\User\settings.json"
 }
 
 if (-not $ProjectPath) {
@@ -71,6 +79,36 @@ function Write-TextFile([string]$Path, [string]$Content) {
   $dir = Split-Path -Parent $Path
   if ($dir -and -not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
   [System.IO.File]::WriteAllText($Path, $Content, [System.Text.UTF8Encoding]::new($false))
+}
+
+# 合并 VS Code 用户 settings.json：关掉「信任此文件夹作者」弹窗 + 各种首启打扰
+# 这是「装完打开却用不了、还要点一堆东西」的根因（工作区信任=受限模式会禁用扩展/终端）
+function Set-VsCodeUserSettings([string]$Path) {
+  $desired = [ordered]@{
+    "security.workspace.trust.enabled"       = $false
+    "security.workspace.trust.startupPrompt" = "never"
+    "security.workspace.trust.banner"        = "never"
+    "telemetry.telemetryLevel"               = "off"
+    "workbench.startupEditor"                = "none"
+    "git.openRepositoryInParentFolders"      = "never"
+    "extensions.ignoreRecommendations"       = $true
+    "update.showReleaseNotes"                = $false
+  }
+  $merged = [ordered]@{}
+  if (Test-Path $Path) {
+    try {
+      $obj = Get-Content $Path -Raw -Encoding UTF8 | ConvertFrom-Json
+      $obj.PSObject.Properties | ForEach-Object { $merged[$_.Name] = $_.Value }
+    } catch {
+      # 解析失败（可能含注释/损坏）→ 先备份再用全新配置，避免误删用户内容
+      $bak = "$Path.bak-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
+      Copy-Item -LiteralPath $Path -Destination $bak -Force -ErrorAction SilentlyContinue
+      Write-Skip "VS Code 旧配置无法解析，已备份 → $([System.IO.Path]::GetFileName($bak))"
+    }
+  }
+  foreach ($k in $desired.Keys) { $merged[$k] = $desired[$k] }
+  $json = ($merged | ConvertTo-Json -Depth 20)
+  Write-TextFile $Path $json
 }
 
 # ═══════════════════════════════════════════════════════
@@ -395,6 +433,35 @@ function Get-NodeMajor {
   } catch { return 0 }
 }
 
+# 解析「真正的 VS Code」可执行：PATH 上的 code 可能是 Cursor/其它编辑器抢占的，
+# 装扩展/打开都必须用真 VS Code，否则扩展装进了别的编辑器、打开的也是别的窗口。
+function Resolve-VsCode {
+  $found = @()
+  # 1) 注册表 vscode:// 处理器里的 Code.exe（最权威，URI 也用它）
+  try {
+    if (-not (Get-PSDrive HKCR -ErrorAction SilentlyContinue)) {
+      New-PSDrive -Name HKCR -PSProvider Registry -Root HKEY_CLASSES_ROOT -ErrorAction SilentlyContinue | Out-Null
+    }
+    $h = (Get-ItemProperty "HKCR:\vscode\shell\open\command" -ErrorAction SilentlyContinue).'(default)'
+    if ($h -and $h -match '"([^"]+Code\.exe)"') {
+      $bin = Join-Path (Split-Path $matches[1]) "bin\code.cmd"
+      if (Test-Path $bin) { $found += $bin }
+    }
+  } catch { }
+  # 2) 常见安装路径
+  $cands = @(
+    (Join-Path $env:LOCALAPPDATA "Programs\Microsoft VS Code\bin\code.cmd"),
+    (Join-Path $env:ProgramFiles "Microsoft VS Code\bin\code.cmd")
+  )
+  if (${env:ProgramFiles(x86)}) { $cands += (Join-Path ${env:ProgramFiles(x86)} "Microsoft VS Code\bin\code.cmd") }
+  foreach ($c in $cands) { if ($c -and (Test-Path $c)) { $found += $c } }
+  # 3) PATH 上的 code，但必须确属 Microsoft VS Code（排除 Cursor 等）
+  $g = Get-Command code -ErrorAction SilentlyContinue
+  if ($g -and $g.Source -match 'Microsoft VS Code') { $found += $g.Source }
+  if ($found.Count -gt 0) { return $found[0] }
+  return $null
+}
+
 # Claude Code：检测优先（可能是 npm 装的），装了就更新，没装才安装
 function Ensure-ClaudeCode {
   if (Test-Command claude) {
@@ -564,18 +631,23 @@ if (-not $SkipSystemInstall) {
   # ── Claude Code：检测优先（可能 npm 装的），装了更新/没装安装 ──
   Ensure-ClaudeCode
 
-  # ── VS Code 扩展：--force 本身就是装了即更新 ──
-  if (Test-Command code) {
+  # ── VS Code 扩展：用「真 VS Code」装，避免装进 Cursor 等 ──
+  $VsCodeCmd = Resolve-VsCode
+  if ($VsCodeCmd) {
     Write-Host "  安装/更新 VS Code 扩展 anthropic.claude-code ..."
-    & code --install-extension anthropic.claude-code --force 2>&1 | Out-Null
+    & $VsCodeCmd --install-extension anthropic.claude-code --force 2>&1 | Out-Null
     if ($LASTEXITCODE -eq 0) {
-      Write-Ok "Claude Code 扩展已安装/更新"
+      Write-Ok "Claude Code 扩展已安装/更新（VS Code: $VsCodeCmd）"
     } else {
       Write-Warn "扩展安装可能失败，请在 VS Code 扩展市场搜索 Claude Code 手动安装"
     }
   } else {
-    Write-Warn "code 命令不可用，请安装 VS Code 后手动安装 Claude Code 扩展"
+    Write-Warn "未找到真正的 VS Code（PATH 上的 code 可能是 Cursor）。请确认已装 VS Code 后手动装 Claude Code 扩展"
   }
+
+  # ── VS Code 用户设置：消除「信任弹窗 / 受限模式 / 首启打扰」──
+  Set-VsCodeUserSettings $UserVsCodeSettings
+  Write-Ok "VS Code 已关闭工作区信任弹窗等首启打扰（打开即可用）"
 } else {
   Write-Step "1/6" "跳过系统安装 (-SkipSystemInstall)"
 }
@@ -834,18 +906,31 @@ Write-Host "======================================================" -ForegroundC
 Write-Host "  安装完成！" -ForegroundColor Green
 Write-Host "======================================================" -ForegroundColor Green
 Write-Host ""
-Write-Host "  下一步（只需做一次）：" -ForegroundColor White
-Write-Host "  1. 打开 VS Code → 文件 → 打开文件夹 → 选你的项目" -ForegroundColor White
-Write-Host "  2. 左侧 Claude Code 图标开聊" -ForegroundColor White
-Write-Host "  3. 若弹出 @import 授权 → 点「允许」" -ForegroundColor White
-Write-Host "  4. MCP 面板确认 ai-ship 变绿" -ForegroundColor White
-Write-Host "  5. 说「继续上次」测试记忆是否注入" -ForegroundColor White
+Write-Host "  全部就绪，正在自动打开 VS Code 并切到 Claude Code 对话框..." -ForegroundColor White
 Write-Host ""
-Write-Host "  不需要 ccSwitch — DeepSeek 已在 ~/.claude/settings.json 配好" -ForegroundColor DarkGray
-Write-Host "  主模型: deepseek-v4-pro  |  看图: Moonshot/Kimi 旁路" -ForegroundColor DarkGray
+Write-Host "  打开后若有弹窗：@import 授权点「允许」即可（仅一次）" -ForegroundColor DarkGray
+Write-Host "  不需要 ccSwitch / 不需要登录 — DeepSeek 已在 ~/.claude/settings.json 配好" -ForegroundColor DarkGray
+Write-Host "  主模型: deepseek-v4-pro[1m]  |  看图: Moonshot/Kimi 旁路" -ForegroundColor DarkGray
+Write-Host "  快捷键：Ctrl+Esc 在编辑器和 Claude 输入框间切换" -ForegroundColor DarkGray
 Write-Host ""
 
-if ($OpenVsCode -and (Test-Command code)) {
+$VsCodeOpen = Resolve-VsCode
+if ($OpenVsCode -and $VsCodeOpen) {
   Write-Host "  正在打开 VS Code ..."
-  Start-Process "code" -ArgumentList @("-n", "`"$ProjectPath`"")
+  # 1) 先用「真 VS Code」打开项目文件夹（建立工作区上下文：记忆 Hook / MCP / CLAUDE.md 都依赖它）
+  & $VsCodeOpen -n "$ProjectPath" 2>&1 | Out-Null
+  # 2) 等窗口与扩展就绪，再用官方 URI 处理器打开 Claude Code 标签并预填欢迎语（不自动发送）
+  #    见 https://code.claude.com/docs/en/ide-integrations （vscode://anthropic.claude-code/open）
+  Start-Sleep -Seconds 6
+  $welcome = "你好！请先读 .ai/focus.md 和 CLAUDE.md 了解项目，然后告诉我你想做什么。"
+  $enc = [uri]::EscapeDataString($welcome)
+  $claudeUri = "vscode://anthropic.claude-code/open?prompt=$enc"
+  try {
+    Start-Process $claudeUri -ErrorAction Stop
+    Write-Ok "已自动打开 Claude Code 对话框（输入框已就绪）"
+  } catch {
+    Write-Warn "自动聚焦失败，请在 VS Code 里按 Ctrl+Esc 或点左侧 Claude 图标开聊"
+  }
+} elseif ($OpenVsCode) {
+  Write-Warn "未找到 VS Code，跳过自动打开。装好 VS Code 后重跑即可。"
 }
