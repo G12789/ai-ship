@@ -43,6 +43,10 @@ $ErrorActionPreference = "Stop"
 # 终止性安全异常中断整个安装。这里给「当前进程」放行（无需管理员、进程退出即恢复）。
 try { Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force -ErrorAction SilentlyContinue } catch { }
 
+# 无代理也能下：npm 包默认走国内镜像（仅本次运行内生效，不改用户全局 .npmrc）。
+# 用户若已自行配置 registry，则尊重其设置不覆盖。
+if (-not $env:npm_config_registry) { $env:npm_config_registry = "https://registry.npmmirror.com" }
+
 # ─── 路径 ─────────────────────────────────────────────
 # 自包含脚本：所有模板内联在本文件末尾，不依赖任何外部 templates/ 目录。
 # 兼容三种运行方式：双击 / -File / `irm <url> | iex`（管道运行时无文件路径）。
@@ -85,6 +89,20 @@ function Write-Step([string]$n, [string]$msg) {
 function Write-Ok([string]$msg) { Write-Host "  OK  $msg" -ForegroundColor Green }
 function Write-Skip([string]$msg) { Write-Host "  --  $msg" -ForegroundColor DarkGray }
 function Write-Warn([string]$msg) { Write-Host "  !!  $msg" -ForegroundColor Yellow }
+
+# 检查进度条：和下载进度条同款观感。重跑时已装组件走「快速检查」而非重下，省时又有视频效果。
+function Show-CheckBar([string]$Label, [int]$DurationMs = 800) {
+  $width = 26
+  $delay = [math]::Max(6, [int]($DurationMs / $width))
+  for ($i = 1; $i -le $width; $i++) {
+    $fill = ("#" * $i).PadRight($width, '.')
+    $pct = [int](($i * 100) / $width)
+    Write-Host ("`r  检查 {0} [{1}] {2,3}%" -f $Label, $fill, $pct) -NoNewline -ForegroundColor Cyan
+    Start-Sleep -Milliseconds $delay
+  }
+  Write-Host ("`r  检查 {0} [{1}] 100%" -f $Label, ("#" * $width)) -NoNewline -ForegroundColor Green
+  Write-Host ""
+}
 
 # 写 UTF-8 无 BOM 文本文件（hooks/mjs/json 都用它）
 function Write-TextFile([string]$Path, [string]$Content) {
@@ -420,6 +438,7 @@ function Ensure-WingetPackage {
     [string]$Label
   )
   if (Test-WingetInstalled $Id) {
+    Show-CheckBar "$Label 安装状态" 700
     Write-Host "  $Label 已安装 → 检查更新 ..."
     # 已安装则尝试升级；"无可用更新" 不算失败，照常继续
     winget upgrade --id $Id -e --accept-package-agreements --accept-source-agreements --disable-interactivity 2>$null | Out-Null
@@ -495,7 +514,10 @@ function Get-VsCodeExtensions([string]$CodeCmd) {
 # 没装才带超时 + 心跳点下载，网络不通时绝不无限等待。返回 "ok" / "timeout" / "fail"。
 function Install-VsCodeExtension([string]$CodeCmd, [string]$Ext, [int]$TimeoutSec = 180) {
   # 1) 已装直接成功（不联网）—— 这是「明明装过却卡在下载」的根治
-  if ((Get-VsCodeExtensions $CodeCmd) -contains $Ext) { return "ok" }
+  if ((Get-VsCodeExtensions $CodeCmd) -contains $Ext) {
+    Show-CheckBar "VS Code 扩展 $Ext" 700
+    return "ok"
+  }
 
   $out = [System.IO.Path]::GetTempFileName()
   $err = [System.IO.Path]::GetTempFileName()
@@ -547,6 +569,7 @@ function New-DesktopShortcut([string]$TargetExe, [string]$Name) {
 # Claude Code：检测优先（可能是 npm 装的），装了就更新，没装才安装
 function Ensure-ClaudeCode {
   if (Test-Command claude) {
+    Show-CheckBar "Claude Code CLI" 700
     Write-Host "  Claude Code 已安装 → 尝试更新 ..."
     # 原生安装器支持 self-update；npm 版则忽略失败
     try { & claude update 2>&1 | Out-Null } catch { }
@@ -701,7 +724,8 @@ if (-not $SkipSystemInstall) {
     Write-Warn "Node 版本过低 (v$nodeMajor)，升级到 LTS ..."
     Ensure-WingetPackage -Id "OpenJS.NodeJS.LTS" -Label "Node.js LTS"
   } else {
-    Write-Ok "Node 已安装且够新 ($(node -v))，跳过"
+    Show-CheckBar "Node $(node -v)" 700
+    Write-Ok "Node 已安装且够新，跳过"
   }
   Refresh-Path
   if (-not (Test-Command node)) { throw "Node 安装后仍不可用，请重开终端再跑脚本。" }
