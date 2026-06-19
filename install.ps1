@@ -43,8 +43,16 @@ $ErrorActionPreference = "Stop"
 # 自包含脚本：所有模板内联在本文件末尾，不依赖任何外部 templates/ 目录。
 # 兼容三种运行方式：双击 / -File / `irm <url> | iex`（管道运行时无文件路径）。
 $SelfPath = $null
-if ($PSCommandPath) { $SelfPath = $PSCommandPath }
-elseif ($MyInvocation.MyCommand.Path) { $SelfPath = $MyInvocation.MyCommand.Path }
+if ($PSCommandPath) {
+  $SelfPath = $PSCommandPath
+} else {
+  # 管道运行(irm|iex)时 $MyInvocation.MyCommand 没有 Path 属性，
+  # StrictMode Latest 下直接访问会抛 PropertyNotFoundStrict，这里先判存在再取。
+  try {
+    $mc = $MyInvocation.MyCommand
+    if ($mc -and $mc.PSObject.Properties['Path'] -and $mc.Path) { $SelfPath = $mc.Path }
+  } catch { $SelfPath = $null }
+}
 
 if ($ClaudeSettingsPath) {
   $UserClaudeSettings = $ClaudeSettingsPath
