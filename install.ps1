@@ -39,6 +39,10 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+# 系统执行策略为 Restricted 时，调用 npm/npx 会解析到 npm.ps1/npx.ps1 而被「禁止运行脚本」
+# 终止性安全异常中断整个安装。这里给「当前进程」放行（无需管理员、进程退出即恢复）。
+try { Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force -ErrorAction SilentlyContinue } catch { }
+
 # ─── 路径 ─────────────────────────────────────────────
 # 自包含脚本：所有模板内联在本文件末尾，不依赖任何外部 templates/ 目录。
 # 兼容三种运行方式：双击 / -File / `irm <url> | iex`（管道运行时无文件路径）。
@@ -470,6 +474,32 @@ function Resolve-VsCode {
   return $null
 }
 
+# 由 code.cmd 路径推出 Code.exe（…\Microsoft VS Code\bin\code.cmd → …\Microsoft VS Code\Code.exe）
+function Resolve-VsCodeExe([string]$CodeCmd) {
+  if (-not $CodeCmd) { return $null }
+  $installDir = Split-Path -Parent (Split-Path -Parent $CodeCmd)
+  $exe = Join-Path $installDir "Code.exe"
+  if (Test-Path $exe) { return $exe }
+  return $null
+}
+
+# 在桌面创建快捷方式（winget 静默装常不建图标，这里补一个，方便用户直接双击打开）
+function New-DesktopShortcut([string]$TargetExe, [string]$Name) {
+  try {
+    if (-not $TargetExe -or -not (Test-Path $TargetExe)) { return $false }
+    $desktop = [Environment]::GetFolderPath('Desktop')
+    if (-not $desktop) { return $false }
+    $lnk = Join-Path $desktop "$Name.lnk"
+    $ws = New-Object -ComObject WScript.Shell
+    $sc = $ws.CreateShortcut($lnk)
+    $sc.TargetPath = $TargetExe
+    $sc.WorkingDirectory = Split-Path -Parent $TargetExe
+    $sc.Description = $Name
+    $sc.Save()
+    return $true
+  } catch { return $false }
+}
+
 # Claude Code：检测优先（可能是 npm 装的），装了就更新，没装才安装
 function Ensure-ClaudeCode {
   if (Test-Command claude) {
@@ -479,7 +509,7 @@ function Ensure-ClaudeCode {
     try {
       $loc = (Get-Command claude).Source
       if ($loc -match 'npm|node_modules') {
-        & npm update -g "@anthropic-ai/claude-code" 2>&1 | Out-Null
+        & npm.cmd update -g "@anthropic-ai/claude-code" 2>&1 | Out-Null
       }
     } catch { }
     Refresh-Path
@@ -657,6 +687,14 @@ if (-not $SkipSystemInstall) {
   # ── VS Code 用户设置：消除「信任弹窗 / 受限模式 / 首启打扰」──
   Set-VsCodeUserSettings $UserVsCodeSettings
   Write-Ok "VS Code 已关闭工作区信任弹窗等首启打扰（打开即可用）"
+
+  # ── 桌面快捷方式（winget 静默装通常不建图标，这里补上）──
+  $codeExe = Resolve-VsCodeExe $VsCodeCmd
+  if (New-DesktopShortcut $codeExe "Visual Studio Code") {
+    Write-Ok "已在桌面创建 VS Code 快捷方式"
+  } else {
+    Write-Skip "未创建桌面快捷方式（不影响使用，可从开始菜单打开 VS Code）"
+  }
 } else {
   Write-Step "1/6" "跳过系统安装 (-SkipSystemInstall)"
 }
@@ -868,12 +906,12 @@ Push-Location $ProjectPath
 try {
   Write-Host "  npx ship-skills@latest init --skip-eval ..."
   $ok = Invoke-WithRetry -Label "ship-skills init" -Action {
-    & npx --yes ship-skills@latest init --skip-eval 2>&1 | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray }
+    & npx.cmd --yes ship-skills@latest init --skip-eval 2>&1 | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray }
   }
   if (-not $ok) {
     Write-Warn "ship-skills init 失败，改用手动 ctxshot 生成 context ..."
     Invoke-WithRetry -Label "ctxshot" -Action {
-      & npx --yes ctxshot@latest --compact --diff --depth 3 --max 120 -o .ai/context.md 2>&1 | Out-Null
+      & npx.cmd --yes ctxshot@latest --compact --diff --depth 3 --max 120 -o .ai/context.md 2>&1 | Out-Null
     } | Out-Null
   }
   if (Test-Path ".ai/context.md") {
@@ -896,7 +934,7 @@ function Invoke-Prewarm {
   param([string]$Spec, [int]$TimeoutSec = 90)
   $job = Start-Job -ScriptBlock {
     param($s)
-    & npm cache add $s 2>&1 | Out-Null
+    & npm.cmd cache add $s 2>&1 | Out-Null
   } -ArgumentList $Spec
   if (Wait-Job $job -Timeout $TimeoutSec) {
     Receive-Job $job | Out-Null
