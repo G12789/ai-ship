@@ -483,6 +483,50 @@ function Resolve-VsCodeExe([string]$CodeCmd) {
   return $null
 }
 
+# 查 code 已装扩展列表（本地、无网络、秒回）。失败返回空数组。
+function Get-VsCodeExtensions([string]$CodeCmd) {
+  try {
+    $list = & { $ErrorActionPreference = 'Continue'; & $CodeCmd --list-extensions 2>$null }
+    return @($list)
+  } catch { return @() }
+}
+
+# 用「真 VS Code」装扩展：先查本地是否已装（已装秒回，避免 --force 联网校验卡死），
+# 没装才带超时 + 心跳点下载，网络不通时绝不无限等待。返回 "ok" / "timeout" / "fail"。
+function Install-VsCodeExtension([string]$CodeCmd, [string]$Ext, [int]$TimeoutSec = 180) {
+  # 1) 已装直接成功（不联网）—— 这是「明明装过却卡在下载」的根治
+  if ((Get-VsCodeExtensions $CodeCmd) -contains $Ext) { return "ok" }
+
+  $out = [System.IO.Path]::GetTempFileName()
+  $err = [System.IO.Path]::GetTempFileName()
+  try {
+    # 2) 没装才下载（带超时）
+    $p = Start-Process -FilePath $CodeCmd `
+      -ArgumentList @("--install-extension", $Ext, "--force") `
+      -NoNewWindow -PassThru -RedirectStandardOutput $out -RedirectStandardError $err
+    $elapsed = 0
+    $exited = $false
+    while ($elapsed -lt $TimeoutSec) {
+      if ($p.WaitForExit(2000)) { $exited = $true; break }
+      $elapsed += 2
+      Write-Host "." -NoNewline -ForegroundColor DarkGray
+    }
+    Write-Host ""
+    if (-not $exited) {
+      # 杀整棵进程树（code.cmd 会派生 node 子进程，单杀父进程会留下僵尸子进程）
+      & cmd /c "taskkill /PID $($p.Id) /T /F" 2>&1 | Out-Null
+    }
+    # 3) 以本地 list-extensions 为准（Start-Process -PassThru 的 .ExitCode 在 PS5.1 常为 null 不可靠）
+    if ((Get-VsCodeExtensions $CodeCmd) -contains $Ext) { return "ok" }
+    if (-not $exited) { return "timeout" }
+    return "fail"
+  } catch {
+    return "fail"
+  } finally {
+    Remove-Item -LiteralPath $out, $err -Force -ErrorAction SilentlyContinue
+  }
+}
+
 # 在桌面创建快捷方式（winget 静默装常不建图标，这里补一个，方便用户直接双击打开）
 function New-DesktopShortcut([string]$TargetExe, [string]$Name) {
   try {
@@ -672,13 +716,13 @@ if (-not $SkipSystemInstall) {
   # ── VS Code 扩展：用「真 VS Code」装，避免装进 Cursor 等 ──
   $VsCodeCmd = Resolve-VsCode
   if ($VsCodeCmd) {
-    Write-Host "  安装/更新 VS Code 扩展 anthropic.claude-code ..."
-    # 原生命令 stderr 经 2>&1 并入管道时，EAP=Stop 会触发 NativeCommandError 崩溃；局部降级
-    & { $ErrorActionPreference = 'Continue'; & $VsCodeCmd --install-extension anthropic.claude-code --force 2>&1 | Out-Null }
-    if ($LASTEXITCODE -eq 0) {
-      Write-Ok "Claude Code 扩展已安装/更新（VS Code: $VsCodeCmd）"
-    } else {
-      Write-Warn "扩展安装可能失败，请在 VS Code 扩展市场搜索 Claude Code 手动安装"
+    Write-Host "  安装/更新 VS Code 扩展 anthropic.claude-code（最多等 180 秒，点号=进行中）..."
+    # 需联网从扩展市场下载；网络不通会卡死，故用 Start-Process + 超时 + 心跳，绝不无限等待
+    $extResult = Install-VsCodeExtension $VsCodeCmd "anthropic.claude-code" 180
+    switch ($extResult) {
+      "ok"      { Write-Ok "Claude Code 扩展已安装/更新（VS Code: $VsCodeCmd）" }
+      "timeout" { Write-Warn "扩展下载超时（多为网络/代理不通），已跳过。联网后在 VS Code 扩展市场搜 Claude Code 手动装" }
+      default   { Write-Warn "扩展安装失败（多为网络问题），已跳过。联网后在 VS Code 扩展市场搜 Claude Code 手动装" }
     }
   } else {
     Write-Warn "未找到真正的 VS Code（PATH 上的 code 可能是 Cursor）。请确认已装 VS Code 后手动装 Claude Code 扩展"
