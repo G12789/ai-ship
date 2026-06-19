@@ -406,7 +406,7 @@ function Test-Command([string]$name) {
 # 检测某 winget 包是否已安装
 function Test-WingetInstalled([string]$Id) {
   $list = winget list --id $Id -e --accept-source-agreements 2>$null
-  return ($LASTEXITCODE -eq 0 -and ($list | Select-String -SimpleMatch $Id))
+  return [bool]($LASTEXITCODE -eq 0 -and ($list | Select-String -SimpleMatch $Id))
 }
 
 # 核心：装了就更新，没装才安装
@@ -643,7 +643,8 @@ if (-not $SkipSystemInstall) {
   $VsCodeCmd = Resolve-VsCode
   if ($VsCodeCmd) {
     Write-Host "  安装/更新 VS Code 扩展 anthropic.claude-code ..."
-    & $VsCodeCmd --install-extension anthropic.claude-code --force 2>&1 | Out-Null
+    # 原生命令 stderr 经 2>&1 并入管道时，EAP=Stop 会触发 NativeCommandError 崩溃；局部降级
+    & { $ErrorActionPreference = 'Continue'; & $VsCodeCmd --install-extension anthropic.claude-code --force 2>&1 | Out-Null }
     if ($LASTEXITCODE -eq 0) {
       Write-Ok "Claude Code 扩展已安装/更新（VS Code: $VsCodeCmd）"
     } else {
@@ -670,8 +671,15 @@ $existingMoonshot = [Environment]::GetEnvironmentVariable("MOONSHOT_API_KEY", "U
 if (Test-Path $UserClaudeSettings) {
   try {
     $old = Get-Content $UserClaudeSettings -Raw -Encoding UTF8 | ConvertFrom-Json
-    if ($old.env.ANTHROPIC_AUTH_TOKEN) { $existingDeepseek = $old.env.ANTHROPIC_AUTH_TOKEN }
-    if ($old.env.MOONSHOT_API_KEY) { $existingMoonshot = $old.env.MOONSHOT_API_KEY }
+    # StrictMode 下旧文件若无 env 字段，直接点属性会抛错；先判属性存在再取，避免丢失已有 Key
+    $oldEnv = $old.PSObject.Properties['env']
+    if ($oldEnv -and $oldEnv.Value) {
+      $envProps = $oldEnv.Value.PSObject.Properties
+      $tok = $envProps['ANTHROPIC_AUTH_TOKEN']
+      if ($tok -and $tok.Value) { $existingDeepseek = $tok.Value }
+      $msk = $envProps['MOONSHOT_API_KEY']
+      if ($msk -and $msk.Value) { $existingMoonshot = $msk.Value }
+    }
   } catch { }
 }
 
@@ -926,7 +934,7 @@ $VsCodeOpen = Resolve-VsCode
 if ($OpenVsCode -and $VsCodeOpen) {
   Write-Host "  正在打开 VS Code ..."
   # 1) 先用「真 VS Code」打开项目文件夹（建立工作区上下文：记忆 Hook / MCP / CLAUDE.md 都依赖它）
-  & $VsCodeOpen -n "$ProjectPath" 2>&1 | Out-Null
+  & { $ErrorActionPreference = 'Continue'; & $VsCodeOpen -n "$ProjectPath" 2>&1 | Out-Null }
   # 2) 等窗口与扩展就绪，再用官方 URI 处理器打开 Claude Code 标签并预填欢迎语（不自动发送）
   #    见 https://code.claude.com/docs/en/ide-integrations （vscode://anthropic.claude-code/open）
   Start-Sleep -Seconds 6
