@@ -1,4 +1,4 @@
-﻿#Requires -Version 5.1
+#Requires -Version 5.1
 <#
 .SYNOPSIS
   AI Ship 一键安装：VS Code + Claude Code + DeepSeek + ai-ship-mcp（记忆+看图）
