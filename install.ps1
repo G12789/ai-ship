@@ -221,7 +221,7 @@ $TPL_HOOKS = @'
         "hooks": [
           {
             "type": "command",
-            "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"{{PROJECT_ROOT}}/scripts/cc-on-image-prompt.ps1\"",
+            "command": "node \"{{PROJECT_ROOT}}/scripts/cc-on-image-prompt.mjs\"",
             "timeout": 10000
           }
         ]
@@ -400,19 +400,32 @@ process.stdout.write(
 );
 '@
 
-$TPL_CC_IMG = @'
-$inputRaw = [Console]::In.ReadToEnd()
-if (-not $inputRaw) { exit 0 }
-$lower = $inputRaw.ToLowerInvariant()
-$hasImage = $lower -match 'unsupported image|image\.png|image_url|\.png|\.jpg|\.jpeg|\.webp'
-if (-not $hasImage) { exit 0 }
-Write-Output ""
-Write-Output "## Vision auto-hint (UserPromptSubmit)"
-Write-Output "User sent image(s). DeepSeek cannot see pixels."
-Write-Output "REQUIRED now:"
-Write-Output "1. sync_chat_attachments (multi-paste from IDE)"
-Write-Output "2. describe_paste_batch if 2+ images else describe_paste"
-Write-Output "3. Show image preview markdown from tool result to user"
+$TPL_CC_IMG_MJS = @'
+import { readFileSync } from "node:fs";
+
+let inputRaw = "";
+try {
+  inputRaw = readFileSync(0, "utf8");
+} catch {
+  process.exit(0);
+}
+if (!inputRaw) process.exit(0);
+
+const lower = inputRaw.toLowerCase();
+const hasImage =
+  /unsupported image|image\.png|image_url|\.png|\.jpg|\.jpeg|\.webp/.test(
+    lower,
+  );
+if (!hasImage) process.exit(0);
+
+process.stdout.write(`
+## Vision auto-hint (UserPromptSubmit)
+User sent image(s). DeepSeek cannot see pixels.
+REQUIRED now:
+1. sync_chat_attachments (multi-paste from IDE)
+2. describe_paste_batch if 2+ images else describe_paste
+3. Show image preview markdown from tool result to user
+`);
 '@
 
 function Refresh-Path {
@@ -824,9 +837,13 @@ $userSettings = @{
     CLAUDE_CODE_EFFORT_LEVEL = "max"
     CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1"
     CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK = "1"
+    COLORTERM = "truecolor"
+    TERM = "xterm-256color"
+    FORCE_COLOR = "1"
   }
   enableAllProjectMcpServers = $true
   hasCompletedOnboarding = $true
+  theme = "custom:claude-brand"
 }
 
 if ($moonshotKey) {
@@ -862,6 +879,7 @@ if (Test-Path $UserClaudeSettings) {
     }
     $oldHt["enableAllProjectMcpServers"] = $true
     $oldHt["hasCompletedOnboarding"] = $true
+    $oldHt["theme"] = "custom:claude-brand"
     Write-JsonFile $UserClaudeSettings $oldHt
   } catch {
     Write-JsonFile $UserClaudeSettings $userSettings
@@ -870,6 +888,25 @@ if (Test-Path $UserClaudeSettings) {
   Write-JsonFile $UserClaudeSettings $userSettings
 }
 Write-Ok "DeepSeek 模型配置完成（主模型 deepseek-v4-pro，子任务 deepseek-v4-flash）"
+
+# Claude 终端真彩色 + 橙色品牌主题 + WT 配置
+$setupTerminal = Join-Path $SelfPath "Setup-ClaudeTerminal.ps1"
+if (-not (Test-Path $setupTerminal) -and $SelfPath) {
+  $setupTerminal = Join-Path (Split-Path -Parent $SelfPath) "Setup-ClaudeTerminal.ps1"
+}
+if (Test-Path $setupTerminal) {
+  Write-Host "  配置 Claude 终端橙色主题 ..."
+  & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $setupTerminal -ProjectPath $ProjectPath -PackageRoot (Split-Path -Parent $setupTerminal) 2>&1 | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray }
+} else {
+  # 内联：至少写入主题文件
+  $themesDir = Join-Path $UserClaudeDir "themes"
+  New-Item -ItemType Directory -Path $themesDir -Force | Out-Null
+  $themePath = Join-Path $themesDir "claude-brand.json"
+  if (-not (Test-Path $themePath)) {
+    Write-TextFile $themePath '{"name":"Claude 官方橙","base":"dark","overrides":{"claude":"#D97757","claudeShimmer":"#E8956F","permission":"#D97757","permissionShimmer":"#E8956F","promptBorder":"#D97757","promptBorderShimmer":"#E8956F"}}'
+    Write-Ok "Claude 官方橙主题已写入 ~/.claude/themes/"
+  }
+}
 
 # ═══════════════════════════════════════════════════════
 # 4. 项目级核心配置：记忆 Hook + MCP + CLAUDE.md（先写，保证不依赖网络）
@@ -886,7 +923,7 @@ New-Item -ItemType Directory -Path $projClaude -Force | Out-Null
 # Hook 脚本（内联模板）
 Write-TextFile (Join-Path $projScripts "cc-session-start.mjs") $TPL_CC_START
 Write-TextFile (Join-Path $projScripts "cc-session-end.mjs") $TPL_CC_END
-Write-TextFile (Join-Path $projScripts "cc-on-image-prompt.ps1") $TPL_CC_IMG
+Write-TextFile (Join-Path $projScripts "cc-on-image-prompt.mjs") $TPL_CC_IMG_MJS
 Write-Ok "SessionStart/End + 贴图 Hook 已安装"
 
 # .claude/settings.json（项目 Hook）

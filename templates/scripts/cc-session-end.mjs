@@ -1,5 +1,10 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -7,24 +12,22 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const ai = join(root, ".ai");
 const out = join(ai, "handoff.md");
 const focusFile = join(ai, "focus.md");
+const npxCmd = process.platform === "win32" ? "npx.cmd" : "npx";
 
-const ctxshotCli =
-  process.env.CTXSHOT_CLI ??
-  join(
-    process.env.USERPROFILE ?? "",
-    "Desktop",
-    "opensource-repos",
-    "ctxshot",
-    "dist",
-    "cli.js",
-  );
-
-function runNode(script, args) {
-  const r = spawnSync(process.execPath, [script, ...args], {
-    cwd: root,
-    encoding: "utf8",
-    windowsHide: true,
-  });
+function runCtxshot(args) {
+  const cli = process.env.CTXSHOT_CLI;
+  const r =
+    cli && existsSync(cli)
+      ? spawnSync(process.execPath, [cli, ...args], {
+          cwd: root,
+          encoding: "utf8",
+          windowsHide: true,
+        })
+      : spawnSync(npxCmd, ["--yes", "ctxshot@latest", ...args], {
+          cwd: root,
+          encoding: "utf8",
+          windowsHide: true,
+        });
   return ((r.stdout || "") + (r.stderr || "")).trim();
 }
 
@@ -39,9 +42,7 @@ function runGit(args) {
 
 mkdirSync(ai, { recursive: true });
 
-const ctx = existsSync(ctxshotCli)
-  ? runNode(ctxshotCli, ["--compact", "--diff", "--depth", "2", "--max", "60"])
-  : "";
+const ctx = runCtxshot(["--compact", "--diff", "--depth", "2", "--max", "60"]);
 const status = runGit(["status", "-sb"]);
 const log = runGit(["log", "-5", "--oneline"]);
 const stamp = new Date().toISOString();
@@ -69,7 +70,7 @@ ${log || "(no log)"}
 \`\`\`
 
 ## Project brief (ctxshot)
-${ctx || "(ctxshot unavailable — check CTXSHOT_CLI path)"}
+${ctx || "(ctxshot unavailable)"}
 `;
 
 writeFileSync(out, md, "utf8");

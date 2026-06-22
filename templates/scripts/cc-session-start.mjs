@@ -15,22 +15,20 @@ const ctxFile = join(ai, "context.md");
 const handoffFile = join(ai, "handoff.md");
 const focusFile = join(ai, "focus.md");
 
-const ctxshotCli =
-  process.env.CTXSHOT_CLI ??
-  join(
-    process.env.USERPROFILE ?? "",
-    "Desktop",
-    "opensource-repos",
-    "ctxshot",
-    "dist",
-    "cli.js",
-  );
-
 const MAX_AGE_HOURS = 4;
 const CTXSHOT_ARGS = ["--compact", "--diff", "--depth", "3", "--max", "120"];
+const npxCmd = process.platform === "win32" ? "npx.cmd" : "npx";
 
-function runNode(script, args) {
-  return spawnSync(process.execPath, [script, ...args], {
+function runCtxshot(args) {
+  const cli = process.env.CTXSHOT_CLI;
+  if (cli && existsSync(cli)) {
+    return spawnSync(process.execPath, [cli, ...args], {
+      cwd: root,
+      encoding: "utf8",
+      windowsHide: true,
+    });
+  }
+  return spawnSync(npxCmd, ["--yes", "ctxshot@latest", ...args], {
     cwd: root,
     encoding: "utf8",
     windowsHide: true,
@@ -65,11 +63,12 @@ if (existsSync(ctxFile)) {
   if (ageH >= MAX_AGE_HOURS) needRefresh = true;
 }
 
-if (needRefresh && existsSync(ctxshotCli)) {
-  const r = runNode(ctxshotCli, [...CTXSHOT_ARGS, "-o", ".ai/context.md"]);
-  if (r.status !== 0) {
-    process.stderr.write(`ctxshot refresh failed: ${r.stderr || r.stdout}\n`);
-    if (!existsSync(ctxFile)) process.exit(1);
+if (needRefresh) {
+  const r = runCtxshot([...CTXSHOT_ARGS, "-o", ".ai/context.md"]);
+  if (r.status !== 0 && !existsSync(ctxFile)) {
+    process.stderr.write(
+      `ctxshot refresh failed: ${((r.stderr || r.stdout) || "").toString().slice(0, 200)}\n`,
+    );
   }
 }
 

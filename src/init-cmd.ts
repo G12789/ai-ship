@@ -67,10 +67,13 @@ function ensureClaudeHooks(cwd: string): void {
   mkdirSync(scriptsDir, { recursive: true });
   mkdirSync(claudeDir, { recursive: true });
 
-  const tplScript = (name: string) =>
-    join(PKG_ROOT, "templates", "scripts", name);
-  for (const name of ["cc-session-start.ps1", "cc-on-image-prompt.ps1"]) {
-    const src = tplScript(name);
+  const hookScripts = [
+    "cc-session-start.mjs",
+    "cc-session-end.mjs",
+    "cc-on-image-prompt.mjs",
+  ] as const;
+  for (const name of hookScripts) {
+    const src = join(PKG_ROOT, "templates", "scripts", name);
     const dest = join(scriptsDir, name);
     if (!existsSync(src)) continue;
     copyFileSync(src, dest);
@@ -85,10 +88,31 @@ function ensureClaudeHooks(cwd: string): void {
     json = json.replace(/\{\{PROJECT_ROOT\}\}/g, rootEsc);
     if (!existsSync(settingsPath)) {
       writeFileSync(settingsPath, json, "utf8");
-      console.log(pc.green("已生成 .claude/settings.json（SessionStart + 贴图 Hook）"));
+      console.log(pc.green("已生成 .claude/settings.json（SessionStart/End + 贴图 Hook）"));
     } else {
       console.log(pc.dim(".claude/settings.json 已存在，跳过"));
     }
+  }
+
+  const localPath = join(claudeDir, "settings.local.json");
+  if (!existsSync(localPath)) {
+    writeFileSync(
+      localPath,
+      JSON.stringify(
+        {
+          enableAllProjectMcpServers: true,
+          enabledMcpjsonServers: ["ai-ship"],
+          permissions: {
+            allow: ["mcp__ai-ship__*"],
+            deny: [],
+          },
+        },
+        null,
+        2,
+      ) + "\n",
+      "utf8",
+    );
+    console.log(pc.green("已生成 .claude/settings.local.json（加载 ai-ship MCP）"));
   }
 }
 

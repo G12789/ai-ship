@@ -5,7 +5,19 @@
         "hooks": [
           {
             "type": "command",
-            "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"{{PROJECT_ROOT}}/scripts/cc-session-start.ps1\""
+            "command": "node \"{{PROJECT_ROOT}}/scripts/cc-session-start.mjs\"",
+            "timeout": 120000
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"{{PROJECT_ROOT}}/scripts/cc-session-end.mjs\"",
+            "timeout": 120000
           }
         ]
       }
@@ -15,7 +27,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"{{PROJECT_ROOT}}/scripts/cc-on-image-prompt.ps1\""
+            "command": "node \"{{PROJECT_ROOT}}/scripts/cc-on-image-prompt.mjs\"",
+            "timeout": 10000
           }
         ]
       }
