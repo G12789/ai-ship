@@ -309,12 +309,27 @@ fi
 cd "$PROJECT_PATH"
 
 ensure_project_hooks() {
-  local base="https://raw.githubusercontent.com/G12789/ai-ship/master"
+  # 多源回退：国内无 VPN 优先走 jsDelivr / gh-proxy，最后才回 GitHub raw。
+  # 可用 AI_SHIP_BASE 环境变量强制指定（如自建 Gitee 镜像）。
+  local bases=()
+  [[ -n "${AI_SHIP_BASE:-}" ]] && bases+=("${AI_SHIP_BASE}")
+  bases+=(
+    "https://cdn.jsdelivr.net/gh/G12789/ai-ship@master"
+    "https://gh-proxy.com/https://raw.githubusercontent.com/G12789/ai-ship/master"
+    "https://raw.githubusercontent.com/G12789/ai-ship/master"
+  )
+  _fetch_tpl() { # $1=相对路径 $2=输出文件
+    local rel="$1" out="$2" b
+    for b in "${bases[@]}"; do
+      curl -fsSL "${b}/${rel}" -o "$out" 2>/dev/null && return 0
+    done
+    return 1
+  }
   mkdir -p scripts .claude
   for f in cc-session-start.mjs cc-session-end.mjs cc-on-image-prompt.mjs; do
-    curl -fsSL "${base}/templates/scripts/${f}" -o "scripts/${f}" 2>/dev/null || true
+    _fetch_tpl "templates/scripts/${f}" "scripts/${f}" || true
   done
-  if curl -fsSL "${base}/templates/claude.settings.hooks.json" -o /tmp/ai-ship-hooks.json 2>/dev/null; then
+  if _fetch_tpl "templates/claude.settings.hooks.json" /tmp/ai-ship-hooks.json; then
     node -e "
       const fs=require('fs');
       const root=process.argv[1].replace(/\\\\/g,'\\\\\\\\');

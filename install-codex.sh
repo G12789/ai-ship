@@ -13,6 +13,9 @@ KIMI_KEY=""
 OUTPUT_DIR=""
 PROXY_PORT=8787
 
+# npm 走国内镜像（未自定义时），保证国内无 VPN 也能装 codex / 代理包
+[[ -n "${npm_config_registry:-}" ]] || export npm_config_registry="https://registry.npmmirror.com"
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --skip-system-install) SKIP_SYSTEM_INSTALL=1; shift ;;
