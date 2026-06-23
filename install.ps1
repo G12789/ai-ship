@@ -27,6 +27,9 @@ param(
   [string]$ProjectPath = "",
   [switch]$SkipSystemInstall,
   [switch]$OpenVsCode = $true,
+  # 模型来源：domestic=DeepSeek 国产直连；official=登录 Anthropic 官方账号。留空则交互选择。
+  [ValidateSet("", "domestic", "official")]
+  [string]$Source = "",
   # 高级/测试用：直接传 Key 则跳过交互（默认留空 = 隐藏式交互输入）
   [string]$DeepseekKey = "",
   [string]$MoonshotKey = "",
@@ -113,7 +116,7 @@ function Write-TextFile([string]$Path, [string]$Content) {
 
 # 合并 VS Code 用户 settings.json：关掉「信任此文件夹作者」弹窗 + 各种首启打扰
 # 这是「装完打开却用不了、还要点一堆东西」的根因（工作区信任=受限模式会禁用扩展/终端）
-function Set-VsCodeUserSettings([string]$Path) {
+function Set-VsCodeUserSettings([string]$Path, [bool]$DisableClaudeLogin = $false) {
   $desired = [ordered]@{
     "security.workspace.trust.enabled"       = $false
     "security.workspace.trust.startupPrompt" = "never"
@@ -123,6 +126,8 @@ function Set-VsCodeUserSettings([string]$Path) {
     "git.openRepositoryInParentFolders"      = "never"
     "extensions.ignoreRecommendations"       = $true
     "update.showReleaseNotes"                = $false
+    # 国产直连：env 已在 ~/.claude/settings.json 配好，关掉插件的 Anthropic 登录提示
+    "claudeCode.disableLoginPrompt"          = $DisableClaudeLogin
   }
   $merged = [ordered]@{}
   if (Test-Path $Path) {
@@ -718,6 +723,25 @@ Write-Host "  不需要 ccSwitch" -ForegroundColor Magenta
 Write-Host "======================================================" -ForegroundColor Magenta
 Write-Host "  项目目录: $ProjectPath"
 
+# ─── 选择模型来源 ───────────────────────────────────────
+if (-not $Source) {
+  if ($DeepseekKey) {
+    $Source = "domestic"
+  } else {
+    Write-Host ""
+    Write-Host "  选择模型来源：" -ForegroundColor White
+    Write-Host "    [1] 国产 DeepSeek 写代码 + Kimi 识图（便宜，国内无 VPN 可用）  ← 默认" -ForegroundColor Gray
+    Write-Host "    [2] 官方原生 Claude（登录 Anthropic 账号 / 官方 API Key，需订阅）" -ForegroundColor Gray
+    $c = Read-Host "  输入 1 或 2（直接 Enter = 1）"
+    if ($c -eq "2") { $Source = "official" } else { $Source = "domestic" }
+  }
+}
+if ($Source -eq "official") {
+  Write-Host "  模型来源：官方原生 Claude（Anthropic 账号登录）" -ForegroundColor Yellow
+} else {
+  Write-Host "  模型来源：国产 DeepSeek + Kimi（直连，无需 ccSwitch）" -ForegroundColor Yellow
+}
+
 # ═══════════════════════════════════════════════════════
 # 1. 系统依赖
 # ═══════════════════════════════════════════════════════
@@ -766,7 +790,8 @@ if (-not $SkipSystemInstall) {
   }
 
   # ── VS Code 用户设置：消除「信任弹窗 / 受限模式 / 首启打扰」──
-  Set-VsCodeUserSettings $UserVsCodeSettings
+  # 国产直连时同时关掉 Claude Code 插件的 Anthropic 登录提示（env 已配好）
+  Set-VsCodeUserSettings $UserVsCodeSettings ($Source -eq "domestic")
   Write-Ok "VS Code 已关闭工作区信任弹窗等首启打扰（打开即可用）"
 
   # ── 桌面快捷方式（winget 静默装通常不建图标，这里补上）──
@@ -785,48 +810,71 @@ if (-not $SkipSystemInstall) {
 # ═══════════════════════════════════════════════════════
 Write-Step "2/6" "配置 API Key（DeepSeek 写代码 + Moonshot 看图）"
 
-$existingDeepseek = ""
-$existingMoonshot = [Environment]::GetEnvironmentVariable("MOONSHOT_API_KEY", "User")
-if (Test-Path $UserClaudeSettings) {
-  try {
-    $old = Get-Content $UserClaudeSettings -Raw -Encoding UTF8 | ConvertFrom-Json
-    # StrictMode 下旧文件若无 env 字段，直接点属性会抛错；先判属性存在再取，避免丢失已有 Key
-    $oldEnv = $old.PSObject.Properties['env']
-    if ($oldEnv -and $oldEnv.Value) {
-      $envProps = $oldEnv.Value.PSObject.Properties
-      $tok = $envProps['ANTHROPIC_AUTH_TOKEN']
-      if ($tok -and $tok.Value) { $existingDeepseek = $tok.Value }
-      $msk = $envProps['MOONSHOT_API_KEY']
-      if ($msk -and $msk.Value) { $existingMoonshot = $msk.Value }
-    }
-  } catch { }
-}
-
-if ($DeepseekKey) {
-  $deepseekKey = $DeepseekKey.Trim()
-  Write-Skip "DeepSeek Key 由参数传入"
+# 注意：PowerShell 变量名大小写不敏感，$deepseekKey 与参数 $DeepseekKey 是同一变量，
+# 不能在此处统一初始化为 ""，否则会把传入的 -DeepseekKey 清空。仅在官方分支内置空。
+if ($Source -eq "official") {
+  $deepseekKey = ""
+  $moonshotKey = ""
+  Write-Skip "官方模式：用 Anthropic 账号登录，无需 DeepSeek/Moonshot Key"
 } else {
-  Write-Host ""
-  Write-Host "  获取 DeepSeek Key: https://platform.deepseek.com/" -ForegroundColor DarkGray
-  $deepseekKey = Read-ApiKey -Prompt "DeepSeek API Key" -Existing $existingDeepseek
-}
+  $existingDeepseek = ""
+  $existingMoonshot = [Environment]::GetEnvironmentVariable("MOONSHOT_API_KEY", "User")
+  if (Test-Path $UserClaudeSettings) {
+    try {
+      $old = Get-Content $UserClaudeSettings -Raw -Encoding UTF8 | ConvertFrom-Json
+      # StrictMode 下旧文件若无 env 字段，直接点属性会抛错；先判属性存在再取，避免丢失已有 Key
+      $oldEnv = $old.PSObject.Properties['env']
+      if ($oldEnv -and $oldEnv.Value) {
+        $envProps = $oldEnv.Value.PSObject.Properties
+        $tok = $envProps['ANTHROPIC_AUTH_TOKEN']
+        if ($tok -and $tok.Value) { $existingDeepseek = $tok.Value }
+        $msk = $envProps['MOONSHOT_API_KEY']
+        if ($msk -and $msk.Value) { $existingMoonshot = $msk.Value }
+      }
+    } catch { }
+  }
 
-if ($MoonshotKey) {
-  $moonshotKey = $MoonshotKey.Trim()
-  Write-Skip "Moonshot Key 由参数传入"
-} else {
-  Write-Host ""
-  Write-Host "  获取 Moonshot/Kimi Key: https://platform.moonshot.cn/ （贴图识图用）" -ForegroundColor DarkGray
-  $moonshotKey = Read-ApiKey -Prompt "Moonshot API Key" -Existing $existingMoonshot -Optional
+  if ($DeepseekKey) {
+    $deepseekKey = $DeepseekKey.Trim()
+    Write-Skip "DeepSeek Key 由参数传入"
+  } else {
+    Write-Host ""
+    Write-Host "  获取 DeepSeek Key: https://platform.deepseek.com/" -ForegroundColor DarkGray
+    $deepseekKey = Read-ApiKey -Prompt "DeepSeek API Key" -Existing $existingDeepseek
+  }
+
+  if ($MoonshotKey) {
+    $moonshotKey = $MoonshotKey.Trim()
+    Write-Skip "Moonshot Key 由参数传入"
+  } else {
+    Write-Host ""
+    Write-Host "  获取 Moonshot/Kimi Key: https://platform.moonshot.cn/ （贴图识图用）" -ForegroundColor DarkGray
+    $moonshotKey = Read-ApiKey -Prompt "Moonshot API Key" -Existing $existingMoonshot -Optional
+  }
 }
 
 # ═══════════════════════════════════════════════════════
 # 3. 用户级 Claude Code + DeepSeek（替代 ccSwitch）
 # ═══════════════════════════════════════════════════════
-Write-Step "3/6" "写入用户配置 ~/.claude/settings.json（DeepSeek 直连，无需 ccSwitch）"
+Write-Step "3/6" "写入用户配置 ~/.claude/settings.json"
 
-$userSettings = @{
-  env = @{
+# 终端配色等与模型无关，两种来源都写
+$baseEnv = @{
+  CLAUDE_CODE_EFFORT_LEVEL = "max"
+  COLORTERM = "truecolor"
+  TERM = "xterm-256color"
+  FORCE_COLOR = "1"
+}
+# 仅国产来源时写 DeepSeek 直连 env；官方来源留空让用户登录 Anthropic 账号
+$deepseekEnvKeys = @(
+  "ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_MODEL",
+  "ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL",
+  "ANTHROPIC_DEFAULT_HAIKU_MODEL", "CLAUDE_CODE_SUBAGENT_MODEL",
+  "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK"
+)
+$modelEnv = @{}
+if ($Source -ne "official") {
+  $modelEnv = @{
     ANTHROPIC_BASE_URL = "https://api.deepseek.com/anthropic"
     ANTHROPIC_AUTH_TOKEN = $deepseekKey
     ANTHROPIC_MODEL = "deepseek-v4-pro[1m]"
@@ -834,20 +882,16 @@ $userSettings = @{
     ANTHROPIC_DEFAULT_SONNET_MODEL = "deepseek-v4-pro[1m]"
     ANTHROPIC_DEFAULT_HAIKU_MODEL = "deepseek-v4-flash"
     CLAUDE_CODE_SUBAGENT_MODEL = "deepseek-v4-flash"
-    CLAUDE_CODE_EFFORT_LEVEL = "max"
     CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1"
     CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK = "1"
-    COLORTERM = "truecolor"
-    TERM = "xterm-256color"
-    FORCE_COLOR = "1"
   }
-  enableAllProjectMcpServers = $true
-  hasCompletedOnboarding = $true
-  theme = "custom:claude-brand"
 }
+$newEnv = @{}
+foreach ($k in $baseEnv.Keys) { $newEnv[$k] = $baseEnv[$k] }
+foreach ($k in $modelEnv.Keys) { $newEnv[$k] = $modelEnv[$k] }
 
-if ($moonshotKey) {
-  $userSettings.env.MOONSHOT_API_KEY = $moonshotKey
+if ($Source -ne "official" -and $moonshotKey) {
+  $newEnv["MOONSHOT_API_KEY"] = $moonshotKey
   if (-not $ClaudeSettingsPath) {
     # 仅正式运行才写真实用户环境变量（测试重定向时不污染）
     [Environment]::SetEnvironmentVariable("MOONSHOT_API_KEY", $moonshotKey, "User")
@@ -856,38 +900,39 @@ if ($moonshotKey) {
   } else {
     Write-Skip "测试模式：跳过写用户环境变量"
   }
-} else {
+} elseif ($Source -ne "official") {
   Write-Warn "未配置 Moonshot Key，贴图识图 MCP 可能不可用"
 }
 
+# 合并旧配置（保留用户已有项），再按来源决定是否保留 DeepSeek env
+$finalHt = @{}
 if (Test-Path $UserClaudeSettings) {
-  # 覆盖前先备份现有配置（保留你已有的 Key / 自定义项）
   $backup = "$UserClaudeSettings.bak-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
   Copy-Item -LiteralPath $UserClaudeSettings -Destination $backup -Force
   Write-Skip "已备份原配置 → $([System.IO.Path]::GetFileName($backup))"
   try {
-    $oldHt = @{}
     $oldObj = Get-Content $UserClaudeSettings -Raw -Encoding UTF8 | ConvertFrom-Json
-    $oldObj.PSObject.Properties | ForEach-Object { $oldHt[$_.Name] = $_.Value }
-    if ($oldHt["env"]) {
-      $envHt = @{}
-      $oldHt["env"].PSObject.Properties | ForEach-Object { $envHt[$_.Name] = $_.Value }
-      foreach ($k in $userSettings.env.Keys) { $envHt[$k] = $userSettings.env[$k] }
-      $oldHt["env"] = $envHt
-    } else {
-      $oldHt["env"] = $userSettings.env
-    }
-    $oldHt["enableAllProjectMcpServers"] = $true
-    $oldHt["hasCompletedOnboarding"] = $true
-    $oldHt["theme"] = "custom:claude-brand"
-    Write-JsonFile $UserClaudeSettings $oldHt
-  } catch {
-    Write-JsonFile $UserClaudeSettings $userSettings
-  }
-} else {
-  Write-JsonFile $UserClaudeSettings $userSettings
+    $oldObj.PSObject.Properties | ForEach-Object { $finalHt[$_.Name] = $_.Value }
+  } catch { }
 }
-Write-Ok "DeepSeek 模型配置完成（主模型 deepseek-v4-pro，子任务 deepseek-v4-flash）"
+$envHt = @{}
+if ($finalHt["env"]) { $finalHt["env"].PSObject.Properties | ForEach-Object { $envHt[$_.Name] = $_.Value } }
+foreach ($k in $newEnv.Keys) { $envHt[$k] = $newEnv[$k] }
+if ($Source -eq "official") {
+  # 切到官方：清掉残留的 DeepSeek 直连 env，否则仍会走 DeepSeek
+  foreach ($k in $deepseekEnvKeys) { if ($envHt.ContainsKey($k)) { $envHt.Remove($k) } }
+}
+$finalHt["env"] = $envHt
+$finalHt["enableAllProjectMcpServers"] = $true
+$finalHt["hasCompletedOnboarding"] = $true
+$finalHt["theme"] = "custom:claude-brand"
+Write-JsonFile $UserClaudeSettings $finalHt
+
+if ($Source -eq "official") {
+  Write-Ok "官方模式配置完成（首次用 claude 或插件登录 Anthropic 账号）"
+} else {
+  Write-Ok "DeepSeek 模型配置完成（主模型 deepseek-v4-pro，子任务 deepseek-v4-flash）"
+}
 
 # Claude 终端真彩色 + 橙色品牌主题 + WT 配置
 # 管道运行(irm|iex)时 $SelfPath 为 $null，Join-Path $null 会抛错，故先判空再取同级目录。

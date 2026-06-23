@@ -6,9 +6,12 @@
 ## 观众只需要做什么
 
 1. 运行对应系统的一键脚本
-2. 输入 **DeepSeek API Key**（必填）
-3. 输入 **Moonshot API Key**（可选，贴图识图）
-4. 等脚本跑完 → **打开 VS Code** → 开聊
+2. **选模型来源**：直接 Enter = 国产 DeepSeek（国内免梯子）；输 `2` = 官方 Claude（登录 Anthropic 账号）
+3. 国产模式：输入 **DeepSeek API Key**（必填）+ **Moonshot API Key**（可选，贴图识图）；官方模式无需 Key
+4. 等脚本跑完 → **打开 VS Code**（CLI + 插件都已配好）→ 开聊
+
+> 命令行可直接指定来源：`-Source domestic|official`（PowerShell）/ `--source domestic|official`（bash）。
+> 国产模式会自动关掉 Claude Code 插件的登录提示（`claudeCode.disableLoginPrompt`），插件直接用配好的 DeepSeek。
 
 ---
 

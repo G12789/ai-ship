@@ -11,6 +11,7 @@ set -euo pipefail
 PROJECT_PATH=""
 SKIP_SYSTEM_INSTALL=0
 OPEN_VSCODE=1
+SOURCE=""
 DEEPSEEK_KEY=""
 MOONSHOT_KEY=""
 
@@ -19,6 +20,7 @@ while [[ $# -gt 0 ]]; do
     --project-path) PROJECT_PATH="${2:-}"; shift 2 ;;
     --skip-system-install) SKIP_SYSTEM_INSTALL=1; shift ;;
     --no-open-vscode) OPEN_VSCODE=0; shift ;;
+    --source) SOURCE="${2:-}"; shift 2 ;;
     --deepseek-key) DEEPSEEK_KEY="${2:-}"; shift 2 ;;
     --moonshot-key) MOONSHOT_KEY="${2:-}"; shift 2 ;;
     -h|--help)
@@ -87,35 +89,54 @@ read_api_key() {
   local prompt="$1"
   local existing="${2:-}"
   local optional="${3:-0}"
+  local v src=/dev/stdin
+  # 兼容 curl|bash：交互输入从 /dev/tty 读，否则会把脚本本身当成输入
+  [[ -e /dev/tty ]] && src=/dev/tty
   if [[ -n "$existing" ]]; then
-    read -r -s -p "${prompt} 已存在，Enter 保留 / 输入新 Key 覆盖: " v
-    echo ""
+    read -r -s -p "${prompt} 已存在，Enter 保留 / 输入新 Key 覆盖: " v <"$src" || v=""
+    echo "" >&2
     [[ -z "$v" ]] && { echo "$existing"; return; }
     echo "$v"
     return
   fi
   if [[ "$optional" == "1" ]]; then
-    read -r -s -p "${prompt}（可选，Enter 跳过）: " v
-    echo ""
+    read -r -s -p "${prompt}（可选，Enter 跳过）: " v <"$src" || v=""
+    echo "" >&2
     echo "$v"
     return
   fi
   while true; do
-    read -r -s -p "${prompt}（必填）: " v
-    echo ""
+    read -r -s -p "${prompt}（必填）: " v <"$src" || v=""
+    echo "" >&2
     [[ -n "$v" ]] && { echo "$v"; return; }
   done
 }
 
+resolve_source() {
+  if [[ -n "$SOURCE" ]]; then echo "$SOURCE"; return; fi
+  if [[ -n "$DEEPSEEK_KEY" || -n "${DEEPSEEK_API_KEY:-}" ]]; then echo "domestic"; return; fi
+  if [[ -e /dev/tty ]]; then
+    {
+      echo ""
+      echo "  选择模型来源："
+      echo "    [1] 国产 DeepSeek 写代码 + Kimi 识图（便宜，国内无 VPN 可用）  ← 默认"
+      echo "    [2] 官方原生 Claude（登录 Anthropic 账号 / 官方 API Key，需订阅）"
+    } >&2
+    local c=""; read -r -p "  输入 1 或 2（Enter=1）: " c </dev/tty || c=""
+    [[ "$c" == "2" ]] && { echo "official"; return; }
+  fi
+  echo "domestic"
+}
+
 write_user_claude_settings() {
-  local deepseek="$1"
-  local moonshot="$2"
-  node <<NODE
+  local source="${1:-domestic}"
+  SOURCE_MODE="$source" node <<NODE
 const fs = require("fs");
 const path = require("path");
 const settingsPath = process.env.USER_CLAUDE_SETTINGS;
 const dir = path.dirname(settingsPath);
 fs.mkdirSync(dir, { recursive: true });
+const official = process.env.SOURCE_MODE === "official";
 
 let base = {};
 if (fs.existsSync(settingsPath)) {
@@ -127,37 +148,51 @@ if (fs.existsSync(settingsPath)) {
   } catch {}
 }
 
-const env = {
-  ...(base.env || {}),
-  ANTHROPIC_BASE_URL: "https://api.deepseek.com/anthropic",
-  ANTHROPIC_AUTH_TOKEN: process.env.DEEPSEEK_KEY,
-  ANTHROPIC_MODEL: "deepseek-v4-pro[1m]",
-  ANTHROPIC_DEFAULT_OPUS_MODEL: "deepseek-v4-pro[1m]",
-  ANTHROPIC_DEFAULT_SONNET_MODEL: "deepseek-v4-pro[1m]",
-  ANTHROPIC_DEFAULT_HAIKU_MODEL: "deepseek-v4-flash",
-  CLAUDE_CODE_SUBAGENT_MODEL: "deepseek-v4-flash",
-  CLAUDE_CODE_EFFORT_LEVEL: "max",
-  CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
-  CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK: "1",
-  COLORTERM: "truecolor",
-  TERM: "xterm-256color",
-  FORCE_COLOR: "1",
-};
-if (process.env.MOONSHOT_KEY) env.MOONSHOT_API_KEY = process.env.MOONSHOT_KEY;
+// 配色等与模型无关，两种来源都写
+const env = { ...(base.env || {}) };
+env.CLAUDE_CODE_EFFORT_LEVEL = "max";
+env.COLORTERM = "truecolor";
+env.TERM = "xterm-256color";
+env.FORCE_COLOR = "1";
+
+const deepseekKeys = [
+  "ANTHROPIC_BASE_URL","ANTHROPIC_AUTH_TOKEN","ANTHROPIC_MODEL",
+  "ANTHROPIC_DEFAULT_OPUS_MODEL","ANTHROPIC_DEFAULT_SONNET_MODEL",
+  "ANTHROPIC_DEFAULT_HAIKU_MODEL","CLAUDE_CODE_SUBAGENT_MODEL",
+  "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC","CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK"
+];
+if (official) {
+  // 切官方：清掉残留的 DeepSeek 直连 env，让 Claude 走账号登录
+  for (const k of deepseekKeys) delete env[k];
+} else {
+  Object.assign(env, {
+    ANTHROPIC_BASE_URL: "https://api.deepseek.com/anthropic",
+    ANTHROPIC_AUTH_TOKEN: process.env.DEEPSEEK_KEY,
+    ANTHROPIC_MODEL: "deepseek-v4-pro[1m]",
+    ANTHROPIC_DEFAULT_OPUS_MODEL: "deepseek-v4-pro[1m]",
+    ANTHROPIC_DEFAULT_SONNET_MODEL: "deepseek-v4-pro[1m]",
+    ANTHROPIC_DEFAULT_HAIKU_MODEL: "deepseek-v4-flash",
+    CLAUDE_CODE_SUBAGENT_MODEL: "deepseek-v4-flash",
+    CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
+    CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK: "1",
+  });
+  if (process.env.MOONSHOT_KEY) env.MOONSHOT_API_KEY = process.env.MOONSHOT_KEY;
+}
 
 const out = {
   ...base,
   env,
   enableAllProjectMcpServers: true,
   hasCompletedOnboarding: true,
-  theme: "dark",
+  theme: base.theme || "dark",
 };
 fs.writeFileSync(settingsPath, JSON.stringify(out, null, 2) + "\n");
 NODE
 }
 
 write_vscode_trust_settings() {
-  node <<'NODE'
+  local disable_login="${1:-false}"
+  CLAUDE_DISABLE_LOGIN="$disable_login" node <<'NODE'
 const fs = require("fs");
 const path = process.env.VSCODE_USER_SETTINGS;
 const dir = require("path").dirname(path);
@@ -172,6 +207,8 @@ Object.assign(s, {
   "security.workspace.trust.emptyWindow": false,
   "workbench.startupEditor": "none",
   "extensions.ignoreRecommendations": true,
+  // 国产直连时关掉 Claude Code 插件的 Anthropic 登录提示（env 已配好）
+  "claudeCode.disableLoginPrompt": process.env.CLAUDE_DISABLE_LOGIN === "true",
 });
 fs.writeFileSync(path, JSON.stringify(s, null, 2) + "\n");
 NODE
@@ -184,6 +221,14 @@ echo "  VS Code + Claude Code + DeepSeek + ai-ship-mcp"
 echo "  不需要 ccSwitch"
 echo "======================================================"
 echo "  项目目录: ${PROJECT_PATH}"
+
+SOURCE="$(resolve_source)"
+[[ "$SOURCE" == "official" ]] || SOURCE="domestic"
+if [[ "$SOURCE" == "official" ]]; then
+  echo "  模型来源：官方原生 Claude（Anthropic 账号登录）"
+else
+  echo "  模型来源：国产 DeepSeek + Kimi（直连，无需 ccSwitch）"
+fi
 
 # ── 1. 系统依赖 ──
 if [[ "$SKIP_SYSTEM_INSTALL" -eq 0 ]]; then
@@ -243,7 +288,7 @@ if [[ "$SKIP_SYSTEM_INSTALL" -eq 0 ]]; then
 
   refresh_path
   command_exists node || { echo "Node 不可用，请重开终端后再试" >&2; exit 1; }
-  write_vscode_trust_settings
+  if [[ "$SOURCE" == "domestic" ]]; then write_vscode_trust_settings true; else write_vscode_trust_settings false; fi
   ok "VS Code 首启打扰已关闭"
 else
   step "1/4" "跳过系统安装 (--skip-system-install)"
@@ -253,40 +298,47 @@ fi
 # ── 2. API Key ──
 step "2/4" "配置 API Key（DeepSeek 写代码 + Moonshot 看图）"
 
-existing_deepseek=""
-existing_moonshot="${MOONSHOT_API_KEY:-}"
-if [[ -f "$USER_CLAUDE_SETTINGS" ]]; then
-  existing_deepseek="$(node -e "
-    try {
-      const j=JSON.parse(require('fs').readFileSync('${USER_CLAUDE_SETTINGS}','utf8'));
-      console.log((j.env&&j.env.ANTHROPIC_AUTH_TOKEN)||'');
-    } catch { console.log(''); }
-  ")"
-  existing_moonshot="$(node -e "
-    try {
-      const j=JSON.parse(require('fs').readFileSync('${USER_CLAUDE_SETTINGS}','utf8'));
-      console.log((j.env&&j.env.MOONSHOT_API_KEY)||'${existing_moonshot}');
-    } catch { console.log('${existing_moonshot}'); }
-  ")"
-fi
-
-[[ -n "$DEEPSEEK_KEY" ]] || DEEPSEEK_KEY="${DEEPSEEK_API_KEY:-}"
-[[ -n "$DEEPSEEK_KEY" ]] || DEEPSEEK_KEY="$(read_api_key "DeepSeek API Key" "$existing_deepseek")"
-[[ -n "$MOONSHOT_KEY" ]] || MOONSHOT_KEY="$(read_api_key "Moonshot API Key" "$existing_moonshot" 1)"
-
-export DEEPSEEK_KEY MOONSHOT_KEY USER_CLAUDE_SETTINGS
-write_user_claude_settings "$DEEPSEEK_KEY" "$MOONSHOT_KEY"
-ok "DeepSeek 已写入 ~/.claude/settings.json"
-
-if [[ -n "$MOONSHOT_KEY" ]]; then
-  if [[ "$(uname -s)" == "Darwin" ]]; then
-    grep -q 'MOONSHOT_API_KEY' "${HOME}/.zprofile" 2>/dev/null || \
-      echo "export MOONSHOT_API_KEY=\"${MOONSHOT_KEY}\"" >> "${HOME}/.zprofile"
-  fi
-  export MOONSHOT_API_KEY="$MOONSHOT_KEY"
-  ok "MOONSHOT_API_KEY 已配置"
+if [[ "$SOURCE" == "official" ]]; then
+  skip "官方模式：用 Anthropic 账号登录，无需 DeepSeek/Moonshot Key"
+  export DEEPSEEK_KEY="" MOONSHOT_KEY="" USER_CLAUDE_SETTINGS
+  write_user_claude_settings official
+  ok "官方模式配置完成（首次用 claude 或插件登录 Anthropic 账号）"
 else
-  warn "未配置 Moonshot Key，贴图识图 MCP 可能不可用"
+  existing_deepseek=""
+  existing_moonshot="${MOONSHOT_API_KEY:-}"
+  if [[ -f "$USER_CLAUDE_SETTINGS" ]]; then
+    existing_deepseek="$(node -e "
+      try {
+        const j=JSON.parse(require('fs').readFileSync('${USER_CLAUDE_SETTINGS}','utf8'));
+        console.log((j.env&&j.env.ANTHROPIC_AUTH_TOKEN)||'');
+      } catch { console.log(''); }
+    ")"
+    existing_moonshot="$(node -e "
+      try {
+        const j=JSON.parse(require('fs').readFileSync('${USER_CLAUDE_SETTINGS}','utf8'));
+        console.log((j.env&&j.env.MOONSHOT_API_KEY)||'${existing_moonshot}');
+      } catch { console.log('${existing_moonshot}'); }
+    ")"
+  fi
+
+  [[ -n "$DEEPSEEK_KEY" ]] || DEEPSEEK_KEY="${DEEPSEEK_API_KEY:-}"
+  [[ -n "$DEEPSEEK_KEY" ]] || DEEPSEEK_KEY="$(read_api_key "DeepSeek API Key" "$existing_deepseek")"
+  [[ -n "$MOONSHOT_KEY" ]] || MOONSHOT_KEY="$(read_api_key "Moonshot API Key" "$existing_moonshot" 1)"
+
+  export DEEPSEEK_KEY MOONSHOT_KEY USER_CLAUDE_SETTINGS
+  write_user_claude_settings domestic
+  ok "DeepSeek 已写入 ~/.claude/settings.json"
+
+  if [[ -n "$MOONSHOT_KEY" ]]; then
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+      grep -q 'MOONSHOT_API_KEY' "${HOME}/.zprofile" 2>/dev/null || \
+        echo "export MOONSHOT_API_KEY=\"${MOONSHOT_KEY}\"" >> "${HOME}/.zprofile"
+    fi
+    export MOONSHOT_API_KEY="$MOONSHOT_KEY"
+    ok "MOONSHOT_API_KEY 已配置"
+  else
+    warn "未配置 Moonshot Key，贴图识图 MCP 可能不可用"
+  fi
 fi
 
 # Claude 橙色主题（可选）
@@ -377,8 +429,11 @@ echo "  2. 打开 Claude Code 侧边栏，@import 点「允许」"
 echo "  3. MCP 面板 ai-ship 应变绿"
 echo "  4. 贴图测试识图；说「继续上次」应读到 .ai/focus.md"
 echo ""
-echo "  主模型: deepseek-v4-pro[1m]  |  看图: Moonshot 旁路"
-echo "  不需要 ccSwitch"
+if [[ "$SOURCE" == "official" ]]; then
+  echo "  模型: 官方原生 Claude（首次用 claude 或插件 Sign in 登录 Anthropic 账号）"
+else
+  echo "  主模型: deepseek-v4-pro[1m]  |  看图: Moonshot 旁路  |  不需要 ccSwitch"
+fi
 echo ""
 
 if [[ "$OPEN_VSCODE" -eq 1 ]] && command_exists code; then

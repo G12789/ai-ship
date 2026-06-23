@@ -24,7 +24,15 @@ npx ai-ship check
 
 ## 🚀 零基础一键装好整套 IDE
 
-不想敲一堆命令？一行装好 **Node + Git + VS Code + Claude Code + DeepSeek 直连 + ai-ship-mcp（记忆+看图）**，全程只在配模型时提示输入 API Key，其余全自动，**无需 ccSwitch**。
+不想敲一堆命令？一行装好 **Node + Git + VS Code + Claude Code（CLI + IDE 插件）+ 模型接入 + ai-ship-mcp（记忆+看图）**，全程只在配模型时提示输入 API Key，其余全自动，**无需 ccSwitch**。
+
+装的时候可**选模型来源**：
+
+- **[1] 国产**（默认）：DeepSeek 写代码 + Kimi 识图，便宜，**国内无 VPN 可用**；自动配好 `~/.claude/settings.json` 直连，并关掉插件登录提示
+- **[2] 官方**：登录 Anthropic 账号用原生 Claude（需订阅/官方 Key）
+
+> 直接 Enter = 国产。也可命令行指定 `-Source domestic|official`（PowerShell）/ `--source domestic|official`（bash）。
+> CLI 与 VS Code 插件**共用同一套配置**，装完两端都能用（国产模式插件里贴图也走 Kimi 识图）。
 
 ### Windows
 
@@ -73,10 +81,12 @@ bash install.sh --skip-system-install --project-path .
 
 ---
 
-## 🤖 也支持 Codex（DeepSeek 写代码 + Kimi 识图）
+## 🤖 也支持 Codex（CLI 终端版 + IDE 插件）
 
-用 **OpenAI Codex CLI** 而不是 Claude Code？另有一套平级的全自动脚本。
-Codex 0.128+ 只认 OpenAI Responses 协议，无法直连 DeepSeek，脚本会自动配好本地协议代理（`@codeproxy/cli`），并实现「贴图自动切 Kimi 识图」。
+用 **OpenAI Codex** 而不是 Claude Code？另有一套平级的全自动脚本，同样装好 **CLI + VS Code/Cursor 插件**，并在装时让你**选模型来源**：
+
+- **[1] 国产**（默认）：DeepSeek 写代码 + Kimi 识图。Codex 0.128+ 只认 OpenAI Responses 协议、无法直连 DeepSeek，脚本会自动配好本地协议代理（`@codeproxy/cli`）实现「贴图自动切 Kimi 识图」；并写 `preferred_auth_method=apikey` 让 IDE 插件免登录直接用本地代理
+- **[2] 官方**：登录 ChatGPT 账号用原生 `gpt-5.x`（需订阅）
 
 ```powershell
 # Windows
