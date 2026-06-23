@@ -40,6 +40,8 @@ EOF
 done
 
 [[ -n "$PROJECT_PATH" ]] || PROJECT_PATH="$(pwd)"
+# 新电脑上指定的项目目录可能还不存在，先自动创建再解析
+mkdir -p "$PROJECT_PATH"
 PROJECT_PATH="$(cd "$PROJECT_PATH" && pwd)"
 
 USER_CLAUDE_DIR="${HOME}/.claude"

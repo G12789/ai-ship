@@ -82,6 +82,10 @@ if ($VsCodeSettingsPath) {
 if (-not $ProjectPath) {
   $ProjectPath = (Get-Location).Path
 }
+# 新电脑上指定的项目目录可能还不存在，先自动创建再解析（否则 Resolve-Path 会抛错）
+if (-not (Test-Path -LiteralPath $ProjectPath)) {
+  New-Item -ItemType Directory -Path $ProjectPath -Force | Out-Null
+}
 $ProjectPath = (Resolve-Path -LiteralPath $ProjectPath).Path
 
 # ─── 输出 ─────────────────────────────────────────────
