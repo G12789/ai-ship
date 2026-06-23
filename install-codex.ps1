@@ -47,10 +47,64 @@ $CodexExtId = "openai.chatgpt"
 # 启动器里用 %USERPROFILE% 动态引用代理配置，保证 .bat 内容全 ASCII（防中文路径乱码）
 $ProxyConfigBat = '%USERPROFILE%\.codex\codeproxy.config.json'
 
-# 找一个可用的编辑器命令（用于装完自动打开 IDE）
-function Resolve-Editor {
-  foreach ($c in @("code", "cursor", "windsurf", "code-insiders")) { if (Test-Command $c) { return $c } }
+# 解析「真正的 VS Code」可执行：PATH 上的 code 可能被 Cursor 等抢占。
+# Codex 插件必须装进真 VS Code（与 Claude Code 的接入方式一致），不能进 Cursor。
+function Resolve-VsCode {
+  $found = @()
+  try {
+    if (-not (Get-PSDrive HKCR -ErrorAction SilentlyContinue)) {
+      New-PSDrive -Name HKCR -PSProvider Registry -Root HKEY_CLASSES_ROOT -ErrorAction SilentlyContinue | Out-Null
+    }
+    $h = (Get-ItemProperty "HKCR:\vscode\shell\open\command" -ErrorAction SilentlyContinue).'(default)'
+    if ($h -and $h -match '"([^"]+Code\.exe)"') {
+      $bin = Join-Path (Split-Path $matches[1]) "bin\code.cmd"
+      if (Test-Path $bin) { $found += $bin }
+    }
+  } catch { }
+  $cands = @(
+    (Join-Path $env:LOCALAPPDATA "Programs\Microsoft VS Code\bin\code.cmd"),
+    (Join-Path $env:ProgramFiles "Microsoft VS Code\bin\code.cmd")
+  )
+  if (${env:ProgramFiles(x86)}) { $cands += (Join-Path ${env:ProgramFiles(x86)} "Microsoft VS Code\bin\code.cmd") }
+  foreach ($c in $cands) { if ($c -and (Test-Path $c)) { $found += $c } }
+  $g = Get-Command code -ErrorAction SilentlyContinue
+  if ($g -and $g.Source -match 'Microsoft VS Code') { $found += $g.Source }
+  if ($found.Count -gt 0) { return $found[0] }
   return $null
+}
+function Resolve-VsCodeExe([string]$CodeCmd) {
+  if (-not $CodeCmd) { return $null }
+  $installDir = Split-Path -Parent (Split-Path -Parent $CodeCmd)
+  $exe = Join-Path $installDir "Code.exe"
+  if (Test-Path $exe) { return $exe }
+  return $null
+}
+function Get-VsCodeExtensions([string]$CodeCmd) {
+  try {
+    $list = & { $ErrorActionPreference = 'Continue'; & $CodeCmd --list-extensions 2>$null }
+    return @($list)
+  } catch { return @() }
+}
+function Install-VsCodeExtension([string]$CodeCmd, [string]$Ext, [int]$TimeoutSec = 180) {
+  if ((Get-VsCodeExtensions $CodeCmd) -contains $Ext) { return "ok" }
+  $out = [System.IO.Path]::GetTempFileName()
+  $err = [System.IO.Path]::GetTempFileName()
+  try {
+    $p = Start-Process -FilePath $CodeCmd `
+      -ArgumentList @("--install-extension", $Ext, "--force") `
+      -NoNewWindow -PassThru -RedirectStandardOutput $out -RedirectStandardError $err
+    $elapsed = 0; $exited = $false
+    while ($elapsed -lt $TimeoutSec) {
+      if ($p.WaitForExit(2000)) { $exited = $true; break }
+      $elapsed += 2; Write-Host "." -NoNewline -ForegroundColor DarkGray
+    }
+    Write-Host ""
+    if (-not $exited) { & cmd /c "taskkill /PID $($p.Id) /T /F" 2>&1 | Out-Null }
+    if ((Get-VsCodeExtensions $CodeCmd) -contains $Ext) { return "ok" }
+    if (-not $exited) { return "timeout" }
+    return "fail"
+  } catch { return "fail" }
+  finally { Remove-Item -LiteralPath $out, $err -Force -ErrorAction SilentlyContinue }
 }
 
 function Write-Step([string]$n, [string]$m) { Write-Host ""; Write-Host "[$n] $m" -ForegroundColor Cyan }
@@ -130,29 +184,21 @@ function Write-TextFile([string]$Path, [string]$Content) {
   [System.IO.File]::WriteAllText($Path, $Content, [System.Text.UTF8Encoding]::new($false))
 }
 
-# 把 Codex IDE 插件装到检测到的所有受支持编辑器（VS Code / Cursor / Windsurf）
+# 把 Codex IDE 插件(openai.chatgpt)装进「真正的 VS Code」——与 Claude Code 接入 VS Code 的方式完全一致。
+# 不装进 Cursor/Windsurf：它们有各自内置 AI，且用户要的是 VS Code。
 function Install-CodexExtension {
-  if ($NoExtension) { Write-Skip "已指定 -NoExtension，跳过 IDE 插件"; return }
-  $installed = $false
-  $prev = $ErrorActionPreference
-  # code/cursor 底层是 node，启动常往 stderr 打 DeprecationWarning，那不是错误。
-  # 降级 EAP 避免被当成终止异常，最后用 --list-extensions 校验是否真的装上。
-  $ErrorActionPreference = "Continue"
-  foreach ($cli in @("code", "cursor", "windsurf", "code-insiders")) {
-    if (Test-Command $cli) {
-      & $cli --install-extension $CodexExtId --force 2>&1 | Out-Null
-      $list = (& $cli --list-extensions 2>$null)
-      if ($list -and ($list -join "`n") -match [regex]::Escape($CodexExtId)) {
-        Write-Ok "Codex 插件已装入 $cli（侧边栏可贴图）"
-        $installed = $true
-      } else {
-        Write-Skip "$cli 装插件未确认，可在扩展面板搜「Codex」(OpenAI) 手动装"
-      }
-    }
+  if ($NoExtension) { Write-Skip "已指定 -NoExtension，跳过 VS Code 插件"; return }
+  $vscode = Resolve-VsCode
+  if (-not $vscode) {
+    Write-Warn "未找到真正的 VS Code（PATH 上的 code 可能是 Cursor）。请装 Microsoft VS Code 后，在其扩展面板搜「Codex」(OpenAI) 安装"
+    return
   }
-  $ErrorActionPreference = $prev
-  if (-not $installed) {
-    Write-Skip "未检测到 code/cursor 命令行 → 在 IDE 扩展面板搜「Codex」(发布者 OpenAI) 手动安装"
+  Write-Host "  安装/更新 VS Code 扩展 $CodexExtId（最多等 180 秒，点号=进行中）..."
+  $r = Install-VsCodeExtension $vscode $CodexExtId 180
+  switch ($r) {
+    "ok"      { Write-Ok "Codex 插件已装入 VS Code：$vscode（侧边栏可贴图识图）" }
+    "timeout" { Write-Warn "装 Codex 插件超时（网络），可稍后在 VS Code 扩展面板搜「Codex」(OpenAI) 手动装" }
+    default   { Write-Warn "装 Codex 插件未确认，可在 VS Code 扩展面板搜「Codex」(OpenAI) 手动装" }
   }
 }
 
@@ -332,14 +378,18 @@ pause >nul
   Write-Ok "代理配置 → $ProxyConfig"
   if (-not $kk) { Write-Warn "未填 Kimi Key：贴图时无法自动识图（其余写代码不受影响）" }
 
-  # preferred_auth_method=apikey 让 IDE 插件跳过 ChatGPT 登录、直接用本地 provider
+  # preferred_auth_method=apikey 让 IDE 插件跳过 ChatGPT 登录、直接用本地 provider。
+  # 注意：codex 0.142+ 已废弃 config.toml 内的 [profiles.*] 内联表（用 -p 会报错），
+  # 改为独立文件 ~/.codex/<名>.config.toml，用 --profile <名> 选择。默认 model 即 deepseek。
   $toml = @"
 # Codex 双模型：DeepSeek 主模型，贴图自动经代理切 Kimi 识图
 # 由 install-codex.ps1 生成。需先启动本地代理（启动Codex.bat 会自动起）。
-# preferred_auth_method=apikey：让 VS Code/Cursor 的 Codex 插件不弹 ChatGPT 登录。
+# preferred_auth_method=apikey：让 VS Code 的 Codex 插件不弹 ChatGPT 登录。
+# 默认就是 DeepSeek 写代码；快模型 codex -p flash；纯 Kimi codex -p kimi。
 
 model_provider = "local"
 model = "deepseek-v4-pro"
+model_context_window = 1000000
 preferred_auth_method = "apikey"
 
 [model_providers.local]
@@ -348,21 +398,6 @@ base_url = "http://127.0.0.1:$ProxyPort/v1"
 wire_api = "responses"
 requires_openai_auth = false
 stream_idle_timeout_ms = 300000
-
-[profiles.deepseek]
-model_provider = "local"
-model = "deepseek-v4-pro"
-model_context_window = 1000000
-
-[profiles.flash]
-model_provider = "local"
-model = "deepseek-v4-flash"
-model_context_window = 1000000
-
-[profiles.kimi]
-model_provider = "local"
-model = "kimi-for-coding"
-model_context_window = 256000
 "@
   if (Test-Path $CodexConfig) {
     $bak = "$CodexConfig.bak-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
@@ -371,6 +406,39 @@ model_context_window = 256000
   }
   Write-TextFile $CodexConfig $toml
   Write-Ok "Codex 配置 → $CodexConfig"
+
+  # 新机制 profile 文件：codex -p flash / -p kimi 各读对应文件
+  $flashToml = @"
+# 由 install-codex.ps1 生成：DeepSeek 快模型。用 codex -p flash 选择。
+model_provider = "local"
+model = "deepseek-v4-flash"
+model_context_window = 1000000
+preferred_auth_method = "apikey"
+
+[model_providers.local]
+name = "DeepSeek+Kimi Local Proxy"
+base_url = "http://127.0.0.1:$ProxyPort/v1"
+wire_api = "responses"
+requires_openai_auth = false
+stream_idle_timeout_ms = 300000
+"@
+  $kimiToml = @"
+# 由 install-codex.ps1 生成：Kimi 识图/长上下文。用 codex -p kimi 选择。
+model_provider = "local"
+model = "kimi-for-coding"
+model_context_window = 256000
+preferred_auth_method = "apikey"
+
+[model_providers.local]
+name = "DeepSeek+Kimi Local Proxy"
+base_url = "http://127.0.0.1:$ProxyPort/v1"
+wire_api = "responses"
+requires_openai_auth = false
+stream_idle_timeout_ms = 300000
+"@
+  Write-TextFile (Join-Path $CodexDir "flash.config.toml") $flashToml
+  Write-TextFile (Join-Path $CodexDir "kimi.config.toml") $kimiToml
+  Write-Ok "Profile 文件 → flash.config.toml / kimi.config.toml"
 
   # 插件 apikey 模式需要 auth.json 里存在一个 key（本地代理不校验，占位即可）
   if (Test-Path $CodexAuth) {
@@ -437,11 +505,11 @@ if errorlevel 1 (
   exit /b 1
 )
 
-echo [3/3] Launching Codex (model: deepseek) ...
+echo [3/3] Launching Codex (default model: deepseek) ...
 echo   fast model: codex -p flash   ^|   kimi only: codex -p kimi
-echo   For IDE: run Codex-IDE-Proxy.bat (keep open), then open Codex panel in VS Code/Cursor.
+echo   For IDE: run Codex-IDE-Proxy.bat (keep open), then open Codex panel in VS Code.
 echo.
-codex -p deepseek
+codex
 
 echo.
 echo Codex exited. Press any key to close.
@@ -466,28 +534,28 @@ if ($script:InstallWarnings.Count -gt 0) {
 }
 if ($Source -eq "official") {
   Write-Host "  终端：双击 $launcher（或命令行 codex），首次 codex login 登录 ChatGPT" -ForegroundColor White
-  Write-Host "  IDE ：VS Code/Cursor 侧边栏打开 Codex → Sign in with ChatGPT" -ForegroundColor DarkGray
+  Write-Host "  IDE ：VS Code 侧边栏打开 Codex → Sign in with ChatGPT" -ForegroundColor DarkGray
 } else {
   Write-Host "  终端：双击 $launcher → 自动起代理 → 进 Codex（贴图自动 Kimi）" -ForegroundColor White
-  Write-Host "  IDE ：双击「Codex-IDE-Proxy.bat」让代理常驻（窗口别关）→ VS Code/Cursor 侧边栏用 Codex" -ForegroundColor DarkGray
+  Write-Host "  IDE ：双击「Codex-IDE-Proxy.bat」让代理常驻（窗口别关）→ VS Code 侧边栏用 Codex" -ForegroundColor DarkGray
 }
 Write-Host ""
 
-# ─── 装完自动打开 IDE（顺带把 Codex 接进 VS Code/Cursor 的体验直接呈现）───
-$editor = Resolve-Editor
-if ($editor -and -not $NoExtension) {
+# ─── 装完自动打开「真正的 VS Code」（与 Claude Code 一致），不开 Cursor ───
+$vscodeOpen = Resolve-VsCode
+if ($vscodeOpen -and -not $NoExtension) {
   if ($Source -ne "official") {
-    # 国产：先把代理在后台拉起来，让 IDE 里的 Codex 插件立刻能用（窗口最小化常驻）
+    # 国产：先把代理在后台拉起来，让 VS Code 里的 Codex 插件立刻能用（窗口最小化常驻）
     try {
       Start-Process "cmd.exe" -ArgumentList @("/c", "npx --yes @codeproxy/cli --config `"$ProxyConfig`" --host 127.0.0.1 --port $ProxyPort") -WindowStyle Minimized | Out-Null
-      Write-Ok "已在后台启动本地代理（端口 $ProxyPort）；重启电脑后用「启动Codex代理.bat」再起"
+      Write-Ok "已在后台启动本地代理（端口 $ProxyPort）；重启电脑后用「Codex-IDE-Proxy.bat」再起"
     } catch { Write-Warn "后台代理启动失败，请手动双击「Codex-IDE-Proxy.bat」" }
   }
   try {
-    Write-Host "  正在打开 $editor，可在侧边栏直接用 Codex ..." -ForegroundColor White
-    & { $ErrorActionPreference = 'Continue'; & $editor 2>&1 | Out-Null }
-  } catch { Write-Skip "自动打开 $editor 失败，手动打开即可" }
+    Write-Host "  正在打开 VS Code，可在侧边栏直接用 Codex ..." -ForegroundColor White
+    & { $ErrorActionPreference = 'Continue'; & $vscodeOpen 2>&1 | Out-Null }
+  } catch { Write-Skip "自动打开 VS Code 失败，手动打开即可" }
 } else {
-  Write-Skip "未检测到 code/cursor 命令，手动打开 IDE 后在侧边栏用 Codex"
+  Write-Skip "未找到真正的 VS Code（PATH 上的 code 可能是 Cursor），手动打开 VS Code 后在侧边栏用 Codex"
 }
 Write-Host ""

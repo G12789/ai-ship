@@ -100,18 +100,28 @@ resolve_source() {
 }
 
 # 把 Codex IDE 插件装进检测到的编辑器（VS Code / Cursor / Windsurf）
+# 只装进「真正的 VS Code」(code 命令)——与 Claude Code 接入 VS Code 一致，不装 Cursor/Windsurf
 install_codex_extension() {
-  [[ "$NO_EXTENSION" -eq 1 ]] && { echo "  - 已指定 --no-extension，跳过 IDE 插件"; return; }
-  local installed=0 cli
-  for cli in code cursor windsurf code-insiders; do
-    if has "$cli"; then
-      if "$cli" --install-extension "$CODEX_EXT_ID" --force >/dev/null 2>&1; then
-        ok "Codex 插件已装入 $cli（侧边栏可贴图）"; installed=1
-      fi
-    fi
-  done
-  [[ "$installed" -eq 0 ]] && echo "  - 未检测到 code/cursor 命令 → 在 IDE 扩展面板搜「Codex」(OpenAI) 手动装"
+  [[ "$NO_EXTENSION" -eq 1 ]] && { echo "  - 已指定 --no-extension，跳过 VS Code 插件"; return; }
+  if ! has code; then
+    warn "未找到 VS Code 的 code 命令。请装 VS Code（并在命令面板执行 Shell Command: Install 'code'），再在扩展面板搜「Codex」(OpenAI)"
+    return 0
+  fi
+  if code --list-extensions 2>/dev/null | grep -qix "$CODEX_EXT_ID"; then
+    ok "Codex 插件已在 VS Code（已是最新）"; return 0
+  fi
+  if code --install-extension "$CODEX_EXT_ID" --force >/dev/null 2>&1 \
+     && code --list-extensions 2>/dev/null | grep -qix "$CODEX_EXT_ID"; then
+    ok "Codex 插件已装入 VS Code（侧边栏可贴图识图）"
+  else
+    warn "装 Codex 插件未确认，可在 VS Code 扩展面板搜「Codex」(OpenAI) 手动装"
+  fi
   return 0
+}
+
+# 打开真正的 VS Code（不开 Cursor）
+open_vscode() {
+  has code && code . >/dev/null 2>&1 || true
 }
 
 echo ""
@@ -230,11 +240,14 @@ NODE
 
   mkdir -p "$CODEX_DIR"
   [[ -f "$CODEX_CONFIG" ]] && cp "$CODEX_CONFIG" "${CODEX_CONFIG}.bak-$(date +%Y%m%d-%H%M%S)" && echo "  - 原 config.toml 已备份"
+  # codex 0.142+ 废弃 config.toml 内的 [profiles.*]（用 -p 会报错），改为独立文件 ~/.codex/<名>.config.toml
   cat > "$CODEX_CONFIG" <<TOML
 # Codex 双模型：DeepSeek 主，贴图自动经代理切 Kimi
-# preferred_auth_method=apikey：让 VS Code/Cursor 的 Codex 插件不弹 ChatGPT 登录
+# preferred_auth_method=apikey：让 VS Code 的 Codex 插件不弹 ChatGPT 登录
+# 默认即 DeepSeek 写代码；快模型 codex -p flash；纯 Kimi codex -p kimi
 model_provider = "local"
 model = "deepseek-v4-pro"
+model_context_window = 1000000
 preferred_auth_method = "apikey"
 
 [model_providers.local]
@@ -243,23 +256,36 @@ base_url = "http://127.0.0.1:${PROXY_PORT}/v1"
 wire_api = "responses"
 requires_openai_auth = false
 stream_idle_timeout_ms = 300000
-
-[profiles.deepseek]
-model_provider = "local"
-model = "deepseek-v4-pro"
-model_context_window = 1000000
-
-[profiles.flash]
+TOML
+  cat > "${CODEX_DIR}/flash.config.toml" <<TOML
+# DeepSeek 快模型。用 codex -p flash 选择
 model_provider = "local"
 model = "deepseek-v4-flash"
 model_context_window = 1000000
+preferred_auth_method = "apikey"
 
-[profiles.kimi]
+[model_providers.local]
+name = "DeepSeek+Kimi Local Proxy"
+base_url = "http://127.0.0.1:${PROXY_PORT}/v1"
+wire_api = "responses"
+requires_openai_auth = false
+stream_idle_timeout_ms = 300000
+TOML
+  cat > "${CODEX_DIR}/kimi.config.toml" <<TOML
+# Kimi 识图/长上下文。用 codex -p kimi 选择
 model_provider = "local"
 model = "kimi-for-coding"
 model_context_window = 256000
+preferred_auth_method = "apikey"
+
+[model_providers.local]
+name = "DeepSeek+Kimi Local Proxy"
+base_url = "http://127.0.0.1:${PROXY_PORT}/v1"
+wire_api = "responses"
+requires_openai_auth = false
+stream_idle_timeout_ms = 300000
 TOML
-  ok "Codex 配置 → ${CODEX_CONFIG}"
+  ok "Codex 配置 → ${CODEX_CONFIG}（+ flash/kimi profile 文件）"
 
   # 插件 apikey 模式需要 auth.json 里存在一个 key（本地代理不校验，占位即可）
   [[ -f "$CODEX_AUTH" ]] && cp "$CODEX_AUTH" "${CODEX_AUTH}.bak-$(date +%Y%m%d-%H%M%S)" && echo "  - 原 auth.json 已备份"
@@ -297,8 +323,8 @@ for i in \$(seq 1 30); do
   sleep 1
 done
 echo "Codex 已连 DeepSeek（贴图自动 Kimi）。快模型: codex -p flash | 纯Kimi: codex -p kimi"
-echo "IDE 里用：跑 codex-proxy.sh 让代理常驻，再在 VS Code/Cursor 侧边栏打开 Codex 贴图"
-codex -p deepseek
+echo "IDE 里用：跑 codex-proxy.sh 让代理常驻，再在 VS Code 侧边栏打开 Codex 贴图"
+codex
 LSH
   chmod +x "$LAUNCHER"
   ok "终端启动器 → ${LAUNCHER}"
@@ -318,9 +344,20 @@ else
 fi
 if [[ "$SOURCE" == "official" ]]; then
   echo "  终端: bash ${LAUNCHER}（或 codex），首次 codex login 登录 ChatGPT"
-  echo "  IDE : VS Code/Cursor 侧边栏打开 Codex → Sign in with ChatGPT"
+  echo "  IDE : VS Code 侧边栏打开 Codex → Sign in with ChatGPT"
 else
   echo "  终端: bash ${LAUNCHER} → 自动起代理 → 进 Codex（贴图自动 Kimi）"
-  echo "  IDE : 先运行启动器让代理常驻，再在 VS Code/Cursor 侧边栏用 Codex 贴图识图"
+  echo "  IDE : 先运行 codex-proxy.sh 让代理常驻，再在 VS Code 侧边栏用 Codex 贴图识图"
+fi
+echo ""
+
+# 国产模式后台拉起代理，并打开真正的 VS Code（不开 Cursor）
+if [[ "$NO_EXTENSION" -ne 1 ]] && has code; then
+  if [[ "$SOURCE" != "official" ]]; then
+    nohup npx --yes @codeproxy/cli --config "${PROXY_CONFIG}" --host 127.0.0.1 --port ${PROXY_PORT} >/tmp/codeproxy.log 2>&1 &
+    ok "已在后台启动本地代理（端口 ${PROXY_PORT}）；重启后用 codex-proxy.sh 再起"
+  fi
+  echo "  正在打开 VS Code，可在侧边栏直接用 Codex ..."
+  open_vscode
 fi
 echo ""
