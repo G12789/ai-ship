@@ -187,7 +187,7 @@ echo "  项目目录: ${PROJECT_PATH}"
 
 # ── 1. 系统依赖 ──
 if [[ "$SKIP_SYSTEM_INSTALL" -eq 0 ]]; then
-  step "1/6" "检测并安装系统依赖 (Node / Git / VS Code / Claude Code)"
+  step "1/4" "检测并安装系统依赖 (Node / Git / VS Code / Claude Code)"
 
   if [[ "$(uname -s)" == "Darwin" ]]; then
     if ! command_exists brew; then
@@ -246,12 +246,12 @@ if [[ "$SKIP_SYSTEM_INSTALL" -eq 0 ]]; then
   write_vscode_trust_settings
   ok "VS Code 首启打扰已关闭"
 else
-  step "1/6" "跳过系统安装 (--skip-system-install)"
+  step "1/4" "跳过系统安装 (--skip-system-install)"
   refresh_path
 fi
 
 # ── 2. API Key ──
-step "2/6" "配置 API Key（DeepSeek 写代码 + Moonshot 看图）"
+step "2/4" "配置 API Key（DeepSeek 写代码 + Moonshot 看图）"
 
 existing_deepseek=""
 existing_moonshot="${MOONSHOT_API_KEY:-}"
@@ -298,8 +298,8 @@ JSON
   ok "Claude 主题已写入 ~/.claude/themes/"
 fi
 
-# ── 3-5. 项目配置 + Skills ──
-step "5/6" "配置项目 Hook / MCP / Skills: ${PROJECT_PATH}"
+# ── 3. 项目配置 + Skills ──
+step "3/4" "配置项目 Hook / MCP / Skills: ${PROJECT_PATH}"
 mkdir -p "${PROJECT_PATH}/.ai" "${PROJECT_PATH}/scripts" "${PROJECT_PATH}/.claude"
 
 if [[ -z "${npm_config_registry:-}" ]]; then
@@ -347,8 +347,8 @@ else
 fi
 ensure_project_hooks
 
-# ── 6. 预热 ──
-step "6/6" "预热 npm 包（首次开聊更快）"
+# ── 4. 预热 ──
+step "4/4" "预热 npm 包（首次开聊更快）"
 npm cache add ai-ship-mcp@latest 2>/dev/null && ok "ai-ship-mcp 已缓存" || skip "预热跳过"
 npm cache add ctxshot@latest 2>/dev/null && ok "ctxshot 已缓存" || skip "预热跳过"
 

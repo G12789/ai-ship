@@ -890,11 +890,13 @@ if (Test-Path $UserClaudeSettings) {
 Write-Ok "DeepSeek 模型配置完成（主模型 deepseek-v4-pro，子任务 deepseek-v4-flash）"
 
 # Claude 终端真彩色 + 橙色品牌主题 + WT 配置
-$setupTerminal = Join-Path $SelfPath "Setup-ClaudeTerminal.ps1"
-if (-not (Test-Path $setupTerminal) -and $SelfPath) {
-  $setupTerminal = Join-Path (Split-Path -Parent $SelfPath) "Setup-ClaudeTerminal.ps1"
+# 管道运行(irm|iex)时 $SelfPath 为 $null，Join-Path $null 会抛错，故先判空再取同级目录。
+$setupTerminal = $null
+if ($SelfPath) {
+  $selfParent = Split-Path -Parent $SelfPath
+  if ($selfParent) { $setupTerminal = Join-Path $selfParent "Setup-ClaudeTerminal.ps1" }
 }
-if (Test-Path $setupTerminal) {
+if ($setupTerminal -and (Test-Path $setupTerminal)) {
   Write-Host "  配置 Claude 终端橙色主题 ..."
   & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $setupTerminal -ProjectPath $ProjectPath -PackageRoot (Split-Path -Parent $setupTerminal) 2>&1 | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray }
 } else {
