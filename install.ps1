@@ -765,7 +765,7 @@ if ($Source -eq "official") {
 # 1. 系统依赖
 # ═══════════════════════════════════════════════════════
 if (-not $SkipSystemInstall) {
-  Write-Step "1/6" "检测并安装/更新系统依赖 (Node / Git / VS Code / Claude Code)"
+  Write-Step "1/6" "检测并安装/更新系统依赖 (Node / Git / VS Code)"
 
   if (-not (Test-Command winget)) {
     throw "未找到 winget。请从 Microsoft Store 安装「应用安装程序」后重试。"
@@ -789,39 +789,39 @@ if (-not $SkipSystemInstall) {
   # ── Git / VS Code：装了就更新，没装才安装 ──
   Ensure-WingetPackage -Id "Git.Git" -Label "Git"
   Ensure-WingetPackage -Id "Microsoft.VisualStudioCode" -Label "Visual Studio Code"
+} else {
+  Write-Step "1/6" "跳过系统安装 (-SkipSystemInstall)"; Refresh-Path
+}
 
-  # ── Claude Code：检测优先（可能 npm 装的），装了更新/没装安装 ──
-  Ensure-ClaudeCode
+# ── 以下无论是否 -SkipSystemInstall 都执行：CLI + VS Code 扩展 + 设置是核心交付物，
+#    与 Codex 安装器一致，保证已装好环境的机器重跑也能正确接入 VS Code。──
+# Claude Code CLI：检测优先（可能 npm 装的），装了更新/没装安装
+Ensure-ClaudeCode
 
-  # ── VS Code 扩展：用「真 VS Code」装，避免装进 Cursor 等 ──
-  $VsCodeCmd = Resolve-VsCode
-  if ($VsCodeCmd) {
-    Write-Host "  安装/更新 VS Code 扩展 anthropic.claude-code（最多等 180 秒，点号=进行中）..."
-    # 需联网从扩展市场下载；网络不通会卡死，故用 Start-Process + 超时 + 心跳，绝不无限等待
-    $extResult = Install-VsCodeExtension $VsCodeCmd "anthropic.claude-code" 180
-    switch ($extResult) {
-      "ok"      { Write-Ok "Claude Code 扩展已安装/更新（VS Code: $VsCodeCmd）" }
-      "timeout" { Write-Warn "扩展下载超时（多为网络/代理不通），已跳过。联网后在 VS Code 扩展市场搜 Claude Code 手动装" }
-      default   { Write-Warn "扩展安装失败（多为网络问题），已跳过。联网后在 VS Code 扩展市场搜 Claude Code 手动装" }
-    }
-  } else {
-    Write-Warn "未找到真正的 VS Code（PATH 上的 code 可能是 Cursor）。请确认已装 VS Code 后手动装 Claude Code 扩展"
-  }
-
-  # ── VS Code 用户设置：消除「信任弹窗 / 受限模式 / 首启打扰」──
-  # 国产直连时同时关掉 Claude Code 插件的 Anthropic 登录提示（env 已配好）
-  Set-VsCodeUserSettings $UserVsCodeSettings ($Source -eq "domestic")
-  Write-Ok "VS Code 已关闭工作区信任弹窗等首启打扰（打开即可用）"
-
-  # ── 桌面快捷方式（winget 静默装通常不建图标，这里补上）──
-  $codeExe = Resolve-VsCodeExe $VsCodeCmd
-  if (New-DesktopShortcut $codeExe "Visual Studio Code") {
-    Write-Ok "已在桌面创建 VS Code 快捷方式"
-  } else {
-    Write-Skip "未创建桌面快捷方式（不影响使用，可从开始菜单打开 VS Code）"
+# VS Code 扩展：只装进「真 VS Code」，避免装进 Cursor 等
+$VsCodeCmd = Resolve-VsCode
+if ($VsCodeCmd) {
+  Write-Host "  安装/更新 VS Code 扩展 anthropic.claude-code（最多等 180 秒，点号=进行中）..."
+  $extResult = Install-VsCodeExtension $VsCodeCmd "anthropic.claude-code" 180
+  switch ($extResult) {
+    "ok"      { Write-Ok "Claude Code 扩展已安装/更新（VS Code: $VsCodeCmd）" }
+    "timeout" { Write-Warn "扩展下载超时（多为网络/代理不通），已跳过。联网后在 VS Code 扩展市场搜 Claude Code 手动装" }
+    default   { Write-Warn "扩展安装失败（多为网络问题），已跳过。联网后在 VS Code 扩展市场搜 Claude Code 手动装" }
   }
 } else {
-  Write-Step "1/6" "跳过系统安装 (-SkipSystemInstall)"
+  Write-Warn "未找到真正的 VS Code（PATH 上的 code 可能是 Cursor）。请确认已装 VS Code 后手动装 Claude Code 扩展"
+}
+
+# VS Code 用户设置：消除「信任弹窗 / 受限模式 / 首启打扰」；国产直连时关掉插件的 Anthropic 登录提示
+Set-VsCodeUserSettings $UserVsCodeSettings ($Source -eq "domestic")
+Write-Ok "VS Code 已关闭工作区信任弹窗等首启打扰（打开即可用）"
+
+# 桌面快捷方式（winget 静默装通常不建图标，这里补上）
+$codeExe = Resolve-VsCodeExe $VsCodeCmd
+if (New-DesktopShortcut $codeExe "Visual Studio Code") {
+  Write-Ok "已在桌面创建 VS Code 快捷方式"
+} else {
+  Write-Skip "未创建桌面快捷方式（不影响使用，可从开始菜单打开 VS Code）"
 }
 
 # ═══════════════════════════════════════════════════════

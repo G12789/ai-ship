@@ -257,7 +257,7 @@ fi
 
 # ── 1. 系统依赖 ──
 if [[ "$SKIP_SYSTEM_INSTALL" -eq 0 ]]; then
-  step "1/4" "检测并安装系统依赖 (Node / Git / VS Code / Claude Code)"
+  step "1/4" "检测并安装系统依赖 (Node / Git / VS Code)"
 
   if [[ "$(uname -s)" == "Darwin" ]]; then
     if ! command_exists brew; then
@@ -273,20 +273,6 @@ if [[ "$SKIP_SYSTEM_INSTALL" -eq 0 ]]; then
     fi
     ensure_brew_pkg "git" "Git"
     ensure_brew_pkg "visual-studio-code" "Visual Studio Code"
-    refresh_path
-    if ! command_exists claude; then
-      ensure_claude_cli
-    else
-      ok "Claude Code 已安装"
-      claude update 2>/dev/null || true
-    fi
-    if command_exists code; then
-      echo "  安装 VS Code 扩展 anthropic.claude-code ..."
-      code --install-extension anthropic.claude-code --force 2>/dev/null || \
-        warn "扩展安装失败，请在 VS Code 扩展市场手动安装 Claude Code"
-    else
-      warn "未找到 code 命令，请确认 VS Code 已安装并在 PATH 中"
-    fi
   else
     # Linux: 尽量用包管理器，不强制 brew
     maj="$(node_major)"
@@ -299,21 +285,32 @@ if [[ "$SKIP_SYSTEM_INSTALL" -eq 0 ]]; then
         warn "请手动安装 Node 18+ 和 Git 后加 --skip-system-install 重跑"
       fi
     fi
-    refresh_path
-    ensure_claude_cli
-    if command_exists code; then
-      code --install-extension anthropic.claude-code --force 2>/dev/null || true
-    fi
   fi
-
   refresh_path
   command_exists node || { echo "Node 不可用，请重开终端后再试" >&2; exit 1; }
-  if [[ "$SOURCE" == "domestic" ]]; then write_vscode_trust_settings true; else write_vscode_trust_settings false; fi
-  ok "VS Code 首启打扰已关闭"
 else
   step "1/4" "跳过系统安装 (--skip-system-install)"
   refresh_path
 fi
+
+# ── 以下无论是否 --skip-system-install 都执行：CLI + VS Code 扩展 + 设置是核心交付物，
+#    与 Codex 安装器一致，保证已装好环境的机器重跑也能正确接入 VS Code。──
+if ! command_exists claude; then
+  ensure_claude_cli
+else
+  ok "Claude Code 已安装"
+  claude update 2>/dev/null || true
+fi
+# 只装进真正的 VS Code（code 命令）；Mac/Linux 上 Cursor 的命令是 cursor，不会误装
+if command_exists code; then
+  echo "  安装 VS Code 扩展 anthropic.claude-code ..."
+  code --install-extension anthropic.claude-code --force 2>/dev/null || \
+    warn "扩展安装失败，请在 VS Code 扩展市场手动安装 Claude Code"
+else
+  warn "未找到 code（VS Code）命令。请装 VS Code 并执行命令面板的 Shell Command: Install 'code'，再手动装 Claude Code 扩展"
+fi
+if [[ "$SOURCE" == "domestic" ]]; then write_vscode_trust_settings true; else write_vscode_trust_settings false; fi
+ok "VS Code 首启打扰已关闭"
 
 # ── 2. API Key ──
 step "2/4" "配置 API Key（DeepSeek 写代码 + Moonshot 看图）"
