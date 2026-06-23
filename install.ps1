@@ -95,7 +95,9 @@ function Write-Step([string]$n, [string]$msg) {
 }
 function Write-Ok([string]$msg) { Write-Host "  OK  $msg" -ForegroundColor Green }
 function Write-Skip([string]$msg) { Write-Host "  --  $msg" -ForegroundColor DarkGray }
-function Write-Warn([string]$msg) { Write-Host "  !!  $msg" -ForegroundColor Yellow }
+# 收集所有警告，结尾如实汇总（避免"明明有步骤失败却显示安装完成"的误导）
+$script:InstallWarnings = @()
+function Write-Warn([string]$msg) { Write-Host "  !!  $msg" -ForegroundColor Yellow; $script:InstallWarnings += $msg }
 
 # 检查进度条：和下载进度条同款观感。重跑时已装组件走「快速检查」而非重下，省时又有视频效果。
 function Show-CheckBar([string]$Label, [int]$DurationMs = 800) {
@@ -606,18 +608,31 @@ function Ensure-ClaudeCode {
     return
   }
   Write-Host "  安装 Claude Code CLI ..."
-  try {
-    winget install --id Anthropic.ClaudeCode -e --accept-package-agreements --accept-source-agreements --disable-interactivity
+  $prevEap = $ErrorActionPreference
+  $ErrorActionPreference = "Continue"
+  # 国内优先用 npm（已走 npmmirror 镜像），比 winget / claude.ai 直连更稳、无需梯子。
+  # @anthropic-ai/claude-code 发布在 npm 上，国内镜像可直接拉。
+  for ($i = 1; $i -le 2; $i++) {
+    & npm.cmd install -g "@anthropic-ai/claude-code" 2>&1 | Out-Null
     Refresh-Path
-  } catch {
-    Write-Warn "winget 安装 Claude Code 失败，改用官方 install.ps1 ..."
-    Invoke-RestMethod -Uri "https://claude.ai/install.ps1" -UseBasicParsing | Invoke-Expression
+    if (Test-Command claude) { break }
+    if ($i -lt 2) { Write-Host "  npm 第 $i 次未成功（多为网络抖动），重试 ..." -ForegroundColor DarkGray; Start-Sleep -Seconds 2 }
+  }
+  if (-not (Test-Command claude)) {
+    Write-Host "  npm 未成功，尝试 winget ..."
+    try { winget install --id Anthropic.ClaudeCode -e --accept-package-agreements --accept-source-agreements --disable-interactivity 2>&1 | Out-Null } catch { }
     Refresh-Path
   }
+  if (-not (Test-Command claude)) {
+    Write-Host "  winget 未成功，尝试官方安装器 ..."
+    try { Invoke-RestMethod -Uri "https://claude.ai/install.ps1" -UseBasicParsing | Invoke-Expression } catch { }
+    Refresh-Path
+  }
+  $ErrorActionPreference = $prevEap
   if (Test-Command claude) {
-    Write-Ok "Claude Code CLI 可用"
+    Write-Ok "Claude Code CLI 可用：$(claude --version 2>$null)"
   } else {
-    Write-Warn "Claude Code CLI 未进 PATH，VS Code 扩展自带 CLI 仍可用"
+    Write-Warn "Claude Code CLI 未装上（多为网络）；VS Code 扩展自带 CLI 仍可用，或稍后手动：npm i -g @anthropic-ai/claude-code"
   }
 }
 
@@ -1112,11 +1127,19 @@ if ($warm1 -and $warm2) {
 }
 
 Write-Host ""
-Write-Host "======================================================" -ForegroundColor Green
-Write-Host "  安装完成！" -ForegroundColor Green
-Write-Host "======================================================" -ForegroundColor Green
-Write-Host ""
-Write-Host "  全部就绪，正在自动打开 VS Code 并切到 Claude Code 对话框..." -ForegroundColor White
+if ($script:InstallWarnings.Count -gt 0) {
+  Write-Host "======================================================" -ForegroundColor Yellow
+  Write-Host "  安装结束，但有 $($script:InstallWarnings.Count) 项需注意（多为网络，可重跑或手动处理）：" -ForegroundColor Yellow
+  Write-Host "======================================================" -ForegroundColor Yellow
+  foreach ($w in $script:InstallWarnings) { Write-Host "    !! $w" -ForegroundColor Yellow }
+  Write-Host ""
+} else {
+  Write-Host "======================================================" -ForegroundColor Green
+  Write-Host "  安装完成！" -ForegroundColor Green
+  Write-Host "======================================================" -ForegroundColor Green
+  Write-Host ""
+}
+Write-Host "  正在自动打开 VS Code 并切到 Claude Code 对话框..." -ForegroundColor White
 Write-Host ""
 Write-Host "  打开后若有弹窗：@import 授权点「允许」即可（仅一次）" -ForegroundColor DarkGray
 Write-Host "  不需要 ccSwitch / 不需要登录 — DeepSeek 已在 ~/.claude/settings.json 配好" -ForegroundColor DarkGray

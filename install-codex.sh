@@ -47,7 +47,8 @@ PROXY_CONFIG="${OUTPUT_DIR}/codeproxy.config.json"
 
 step() { echo ""; echo "== [$1] $2"; }
 ok() { echo "  ✓ $*"; }
-warn() { echo "  ! $*" >&2; }
+INSTALL_WARNINGS=()
+warn() { echo "  ! $*" >&2; INSTALL_WARNINGS+=("$*"); }
 has() { command -v "$1" >/dev/null 2>&1; }
 
 refresh_path() {
@@ -284,9 +285,17 @@ LSH
 fi
 
 echo ""
-echo "======================================================"
-echo "  安装完成！"
-echo "======================================================"
+if [[ "${#INSTALL_WARNINGS[@]}" -gt 0 ]]; then
+  echo "======================================================"
+  echo "  安装结束，但有 ${#INSTALL_WARNINGS[@]} 项需注意（多为网络，可重跑或手动处理）："
+  echo "======================================================"
+  for w in "${INSTALL_WARNINGS[@]}"; do echo "    ! $w"; done
+  echo ""
+else
+  echo "======================================================"
+  echo "  安装完成！"
+  echo "======================================================"
+fi
 if [[ "$SOURCE" == "official" ]]; then
   echo "  终端: bash ${LAUNCHER}（或 codex），首次 codex login 登录 ChatGPT"
   echo "  IDE : VS Code/Cursor 侧边栏打开 Codex → Sign in with ChatGPT"

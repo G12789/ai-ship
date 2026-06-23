@@ -44,7 +44,8 @@ $CodexExtId = "openai.chatgpt"
 function Write-Step([string]$n, [string]$m) { Write-Host ""; Write-Host "[$n] $m" -ForegroundColor Cyan }
 function Write-Ok([string]$m) { Write-Host "  OK  $m" -ForegroundColor Green }
 function Write-Skip([string]$m) { Write-Host "  --  $m" -ForegroundColor DarkGray }
-function Write-Warn([string]$m) { Write-Host "  !!  $m" -ForegroundColor Yellow }
+$script:InstallWarnings = @()
+function Write-Warn([string]$m) { Write-Host "  !!  $m" -ForegroundColor Yellow; $script:InstallWarnings += $m }
 
 function Refresh-Path {
   $machine = [Environment]::GetEnvironmentVariable("Path", "Machine")
@@ -121,15 +122,23 @@ function Write-TextFile([string]$Path, [string]$Content) {
 function Install-CodexExtension {
   if ($NoExtension) { Write-Skip "已指定 -NoExtension，跳过 IDE 插件"; return }
   $installed = $false
+  $prev = $ErrorActionPreference
+  # code/cursor 底层是 node，启动常往 stderr 打 DeprecationWarning，那不是错误。
+  # 降级 EAP 避免被当成终止异常，最后用 --list-extensions 校验是否真的装上。
+  $ErrorActionPreference = "Continue"
   foreach ($cli in @("code", "cursor", "windsurf", "code-insiders")) {
     if (Test-Command $cli) {
-      try {
-        & $cli --install-extension $CodexExtId --force 2>&1 | Out-Null
+      & $cli --install-extension $CodexExtId --force 2>&1 | Out-Null
+      $list = (& $cli --list-extensions 2>$null)
+      if ($list -and ($list -join "`n") -match [regex]::Escape($CodexExtId)) {
         Write-Ok "Codex 插件已装入 $cli（侧边栏可贴图）"
         $installed = $true
-      } catch { Write-Skip "$cli 装插件失败：$($_.Exception.Message.Split([Environment]::NewLine)[0])" }
+      } else {
+        Write-Skip "$cli 装插件未确认，可在扩展面板搜「Codex」(OpenAI) 手动装"
+      }
     }
   }
+  $ErrorActionPreference = $prev
   if (-not $installed) {
     Write-Skip "未检测到 code/cursor 命令行 → 在 IDE 扩展面板搜「Codex」(发布者 OpenAI) 手动安装"
   }
@@ -384,10 +393,18 @@ codex -p deepseek
 }
 
 Write-Host ""
-Write-Host "======================================================" -ForegroundColor Green
-Write-Host "  安装完成！" -ForegroundColor Green
-Write-Host "======================================================" -ForegroundColor Green
-Write-Host ""
+if ($script:InstallWarnings.Count -gt 0) {
+  Write-Host "======================================================" -ForegroundColor Yellow
+  Write-Host "  安装结束，但有 $($script:InstallWarnings.Count) 项需注意（多为网络，可重跑或手动处理）：" -ForegroundColor Yellow
+  Write-Host "======================================================" -ForegroundColor Yellow
+  foreach ($w in $script:InstallWarnings) { Write-Host "    !! $w" -ForegroundColor Yellow }
+  Write-Host ""
+} else {
+  Write-Host "======================================================" -ForegroundColor Green
+  Write-Host "  安装完成！" -ForegroundColor Green
+  Write-Host "======================================================" -ForegroundColor Green
+  Write-Host ""
+}
 if ($Source -eq "official") {
   Write-Host "  终端：双击 $launcher（或命令行 codex），首次 codex login 登录 ChatGPT" -ForegroundColor White
   Write-Host "  IDE ：VS Code/Cursor 侧边栏打开 Codex → Sign in with ChatGPT" -ForegroundColor DarkGray

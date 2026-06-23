@@ -44,6 +44,9 @@ done
 mkdir -p "$PROJECT_PATH"
 PROJECT_PATH="$(cd "$PROJECT_PATH" && pwd)"
 
+# npm 走国内镜像（未自定义时），保证国内无 VPN 也能装 Claude Code CLI / 预热包
+[[ -n "${npm_config_registry:-}" ]] || export npm_config_registry="https://registry.npmmirror.com"
+
 USER_CLAUDE_DIR="${HOME}/.claude"
 USER_CLAUDE_SETTINGS="${USER_CLAUDE_DIR}/settings.json"
 
@@ -55,10 +58,30 @@ fi
 
 step() { echo ""; echo "== [$1] $2"; }
 ok() { echo "  ✓ $*"; }
-warn() { echo "  ! $*" >&2; }
+# 收集警告，结尾如实汇总（避免"有步骤失败却显示安装完成"的误导）
+INSTALL_WARNINGS=()
+warn() { echo "  ! $*" >&2; INSTALL_WARNINGS+=("$*"); }
 skip() { echo "  - $*"; }
 
 command_exists() { command -v "$1" >/dev/null 2>&1; }
+
+# 装 Claude Code CLI：国内优先 npm 镜像，失败再回官方安装器
+ensure_claude_cli() {
+  command_exists claude && return 0
+  echo "  安装 Claude Code CLI（优先 npm 镜像）..."
+  local i
+  for i in 1 2; do
+    npm install -g @anthropic-ai/claude-code >/dev/null 2>&1 || true
+    refresh_path
+    command_exists claude && { ok "Claude Code CLI 可用"; return 0; }
+    [[ $i -lt 2 ]] && { echo "  npm 第 $i 次未成功，重试 ..."; sleep 2; }
+  done
+  echo "  npm 未成功，尝试官方安装器 ..."
+  curl -fsSL https://claude.ai/install.sh | bash || true
+  refresh_path
+  command_exists claude && ok "Claude Code CLI 可用" || \
+    warn "Claude Code CLI 未装上（多为网络）；VS Code 扩展自带 CLI 仍可用，或手动 npm i -g @anthropic-ai/claude-code"
+}
 
 refresh_path() {
   export PATH="${HOME}/.local/bin:${PATH}"
@@ -252,9 +275,7 @@ if [[ "$SKIP_SYSTEM_INSTALL" -eq 0 ]]; then
     ensure_brew_pkg "visual-studio-code" "Visual Studio Code"
     refresh_path
     if ! command_exists claude; then
-      echo "  安装 Claude Code CLI ..."
-      curl -fsSL https://claude.ai/install.sh | bash
-      refresh_path
+      ensure_claude_cli
     else
       ok "Claude Code 已安装"
       claude update 2>/dev/null || true
@@ -279,10 +300,7 @@ if [[ "$SKIP_SYSTEM_INSTALL" -eq 0 ]]; then
       fi
     fi
     refresh_path
-    if ! command_exists claude; then
-      curl -fsSL https://claude.ai/install.sh | bash
-      refresh_path
-    fi
+    ensure_claude_cli
     if command_exists code; then
       code --install-extension anthropic.claude-code --force 2>/dev/null || true
     fi
@@ -422,9 +440,17 @@ npm cache add ai-ship-mcp@latest 2>/dev/null && ok "ai-ship-mcp 已缓存" || sk
 npm cache add ctxshot@latest 2>/dev/null && ok "ctxshot 已缓存" || skip "预热跳过"
 
 echo ""
-echo "======================================================"
-echo "  安装完成！"
-echo "======================================================"
+if [[ "${#INSTALL_WARNINGS[@]}" -gt 0 ]]; then
+  echo "======================================================"
+  echo "  安装结束，但有 ${#INSTALL_WARNINGS[@]} 项需注意（多为网络，可重跑或手动处理）："
+  echo "======================================================"
+  for w in "${INSTALL_WARNINGS[@]}"; do echo "    ! $w"; done
+  echo ""
+else
+  echo "======================================================"
+  echo "  安装完成！"
+  echo "======================================================"
+fi
 echo ""
 echo "  1. 用 VS Code 打开项目文件夹: ${PROJECT_PATH}"
 echo "  2. 打开 Claude Code 侧边栏，@import 点「允许」"
