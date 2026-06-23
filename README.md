@@ -73,6 +73,24 @@ bash install.sh --skip-system-install --project-path .
 
 ---
 
+## 🤖 也支持 Codex（DeepSeek 写代码 + Kimi 识图）
+
+用 **OpenAI Codex CLI** 而不是 Claude Code？另有一套平级的全自动脚本。
+Codex 0.128+ 只认 OpenAI Responses 协议，无法直连 DeepSeek，脚本会自动配好本地协议代理（`@codeproxy/cli`），并实现「贴图自动切 Kimi 识图」。
+
+```powershell
+# Windows
+irm https://raw.githubusercontent.com/G12789/ai-ship/master/install-codex.ps1 | iex
+```
+```bash
+# macOS / Linux
+curl -fsSL https://raw.githubusercontent.com/G12789/ai-ship/master/install-codex.sh | bash
+```
+
+📖 细节与排查 → [docs/INSTALL_CODEX.md](docs/INSTALL_CODEX.md)
+
+---
+
 ## 解决什么问题
 
 | 场景 | 笨办法 | ship-skills |
