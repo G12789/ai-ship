@@ -39,11 +39,14 @@ while [[ $# -gt 0 ]]; do
 done
 
 [[ -n "$OUTPUT_DIR" ]] || OUTPUT_DIR="$(pwd)"
+mkdir -p "$OUTPUT_DIR"
 OUTPUT_DIR="$(cd "$OUTPUT_DIR" && pwd)"
 CODEX_DIR="${HOME}/.codex"
+mkdir -p "$CODEX_DIR"
 CODEX_CONFIG="${CODEX_DIR}/config.toml"
 CODEX_AUTH="${CODEX_DIR}/auth.json"
-PROXY_CONFIG="${OUTPUT_DIR}/codeproxy.config.json"
+# 代理配置与 codex 配置同放 ~/.codex，路径稳定
+PROXY_CONFIG="${CODEX_DIR}/codeproxy.config.json"
 
 step() { echo ""; echo "== [$1] $2"; }
 ok() { echo "  ✓ $*"; }
@@ -180,7 +183,10 @@ TOML
   LAUNCHER="${OUTPUT_DIR}/codex-start.sh"
   cat > "$LAUNCHER" <<'LSH'
 #!/usr/bin/env bash
-set -euo pipefail
+if ! command -v codex >/dev/null 2>&1; then
+  echo "[错误] 未找到 codex 命令。请开新终端，或运行: npm i -g @openai/codex"
+  exit 1
+fi
 echo "官方原生模式：首次请先登录 ChatGPT（codex login，或 IDE 插件里 Sign in with ChatGPT）"
 codex
 LSH
@@ -263,25 +269,39 @@ TOML
   step "5/6" "安装 Codex IDE 插件"
   install_codex_extension
 
-  step "6/6" "生成启动器 codex-start.sh"
+  step "6/6" "生成启动器（终端版 codex-start.sh + IDE 代理版 codex-proxy.sh）"
+
+  # IDE 代理保活：只起代理并常驻，IDE 用 Codex 前先跑它（别关）
+  PROXYSH="${OUTPUT_DIR}/codex-proxy.sh"
+  cat > "$PROXYSH" <<PSH
+#!/usr/bin/env bash
+echo "启动本地协议代理 (端口 ${PROXY_PORT})，IDE 用 Codex 期间请保持本窗口开着..."
+exec npx --yes @codeproxy/cli --config "${PROXY_CONFIG}" --host 127.0.0.1 --port ${PROXY_PORT}
+PSH
+  chmod +x "$PROXYSH"
+  ok "IDE 代理保活 → ${PROXYSH}"
+
   LAUNCHER="${OUTPUT_DIR}/codex-start.sh"
   cat > "$LAUNCHER" <<LSH
 #!/usr/bin/env bash
-set -euo pipefail
+if ! command -v codex >/dev/null 2>&1; then
+  echo "[错误] 未找到 codex 命令。请开新终端，或运行: npm i -g @openai/codex"
+  exit 1
+fi
 echo "启动本地协议代理 (端口 ${PROXY_PORT})..."
 npx --yes @codeproxy/cli --config "${PROXY_CONFIG}" --host 127.0.0.1 --port ${PROXY_PORT} >/tmp/codeproxy.log 2>&1 &
 PROXY_PID=\$!
 trap "kill \$PROXY_PID 2>/dev/null || true" EXIT
-for i in \$(seq 1 15); do
+for i in \$(seq 1 30); do
   curl -s http://127.0.0.1:${PROXY_PORT}/v1/models >/dev/null 2>&1 && break
   sleep 1
 done
-echo "Codex 已连 DeepSeek（贴图自动 Kimi）。快模型: codex -p flash"
-echo "IDE 里用：保持本窗口开着(代理常驻)，再在 VS Code/Cursor 侧边栏打开 Codex 贴图"
+echo "Codex 已连 DeepSeek（贴图自动 Kimi）。快模型: codex -p flash | 纯Kimi: codex -p kimi"
+echo "IDE 里用：跑 codex-proxy.sh 让代理常驻，再在 VS Code/Cursor 侧边栏打开 Codex 贴图"
 codex -p deepseek
 LSH
   chmod +x "$LAUNCHER"
-  ok "启动器 → ${LAUNCHER}"
+  ok "终端启动器 → ${LAUNCHER}"
 fi
 
 echo ""

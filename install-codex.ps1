@@ -37,9 +37,21 @@ $CodexDir = Join-Path $env:USERPROFILE ".codex"
 $CodexConfig = Join-Path $CodexDir "config.toml"
 $CodexAuth = Join-Path $CodexDir "auth.json"
 if (-not $OutputDir) { $OutputDir = (Get-Location).Path }
-$ProxyConfig = Join-Path $OutputDir "codeproxy.config.json"
+if (-not (Test-Path -LiteralPath $OutputDir)) { New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null }
+# 代理配置放 ~/.codex（ASCII 路径），启动器里用 %USERPROFILE% 引用，避免项目目录含中文导致 .bat 乱码
+if (-not (Test-Path -LiteralPath $CodexDir)) { New-Item -ItemType Directory -Path $CodexDir -Force | Out-Null }
+$ProxyConfig = Join-Path $CodexDir "codeproxy.config.json"
 $ProxyPort = 8787
 $CodexExtId = "openai.chatgpt"
+
+# 启动器里用 %USERPROFILE% 动态引用代理配置，保证 .bat 内容全 ASCII（防中文路径乱码）
+$ProxyConfigBat = '%USERPROFILE%\.codex\codeproxy.config.json'
+
+# 找一个可用的编辑器命令（用于装完自动打开 IDE）
+function Resolve-Editor {
+  foreach ($c in @("code", "cursor", "windsurf", "code-insiders")) { if (Test-Command $c) { return $c } }
+  return $null
+}
 
 function Write-Step([string]$n, [string]$m) { Write-Host ""; Write-Host "[$n] $m" -ForegroundColor Cyan }
 function Write-Ok([string]$m) { Write-Host "  OK  $m" -ForegroundColor Green }
@@ -253,15 +265,29 @@ model_reasoning_effort = "medium"
 
   Write-Step "6/6" "生成启动器"
   $launcher = Join-Path $OutputDir "启动Codex.bat"
+  # 全 ASCII，避免中文 Windows 下乱码；异常 pause 不闪退
   $launcherContent = @"
 @echo off
 chcp 65001 >nul
-title Codex (官方 gpt-5.x)
+title Codex (official gpt-5.x)
 cd /d "%USERPROFILE%"
-echo 官方原生模式：若首次使用请先登录 ChatGPT 账号
-echo （命令行执行 codex login，或在 IDE 插件里 Sign in with ChatGPT）
+
+where codex >nul 2>&1
+if errorlevel 1 (
+  echo [ERROR] 'codex' not found. Open a NEW terminal, or run: npm i -g @openai/codex
+  pause
+  exit /b 1
+)
+
+echo Official mode: on first use, sign in to your ChatGPT account.
+echo   CLI: run  codex login
+echo   IDE: open the Codex panel in VS Code/Cursor and Sign in with ChatGPT
 echo.
 codex
+
+echo.
+echo Codex exited. Press any key to close.
+pause >nul
 "@
   Write-TextFile $launcher $launcherContent
   Write-Ok "启动器 → $launcher"
@@ -358,38 +384,71 @@ model_context_window = 256000
   Write-Step "5/6" "安装 Codex IDE 插件"
   Install-CodexExtension
 
-  Write-Step "6/6" "生成启动器"
+  Write-Step "6/6" "生成启动器（终端版 + IDE 代理版）"
+
+  # 代理保活脚本：只起代理并常驻。IDE 用 Codex 前先双击它（窗口别关）。
+  # 文件名与内容都用 ASCII，避免中文 Windows 下 cmd 用 GBK 读 UTF-8 .bat 产生乱码。
+  $proxyBat = Join-Path $OutputDir "Codex-IDE-Proxy.bat"
+  $proxyContent = @"
+@echo off
+chcp 65001 >nul
+title Codex Proxy (DeepSeek + Kimi) - keep open for IDE
+echo Starting local proxy on 127.0.0.1:$ProxyPort ...
+echo Keep this window OPEN while using Codex in VS Code / Cursor.
+echo.
+npx --yes @codeproxy/cli --config "$ProxyConfigBat" --host 127.0.0.1 --port $ProxyPort
+echo.
+echo [proxy stopped] Press any key to close.
+pause >nul
+"@
+  Write-TextFile $proxyBat $proxyContent
+  Write-Ok "IDE 代理保活 → $proxyBat"
+
+  # 终端版：起代理 -> 等就绪 -> 进 Codex；任何异常都 pause，绝不闪退看不到错误。
   $launcher = Join-Path $OutputDir "启动Codex.bat"
-  $cfgEsc = $ProxyConfig
   $launcherContent = @"
 @echo off
 chcp 65001 >nul
 title Codex (DeepSeek + Kimi)
 cd /d "%USERPROFILE%"
 
-echo 启动本地协议代理 (端口 $ProxyPort)...
-start "CodeProxy DeepSeek+Kimi" /min cmd /c npx --yes @codeproxy/cli --config "$cfgEsc" --host 127.0.0.1 --port $ProxyPort
+echo [1/3] Starting local proxy on 127.0.0.1:$ProxyPort ...
+start "Codex Proxy DeepSeek Kimi" /min cmd /c npx --yes @codeproxy/cli --config "$ProxyConfigBat" --host 127.0.0.1 --port $ProxyPort
 
-echo 等待代理就绪...
+echo [2/3] Waiting for proxy (first run may download, up to ~30s) ...
 set /a tries=0
 :wait
-timeout /t 1 >nul
+ping -n 2 127.0.0.1 >nul
 curl -s http://127.0.0.1:$ProxyPort/v1/models >nul 2>&1
 if not errorlevel 1 goto ready
 set /a tries+=1
-if %tries% lss 15 goto wait
-echo 代理可能未就绪，仍尝试进入 Codex...
+if %tries% lss 30 goto wait
+echo   [warn] proxy not confirmed, trying Codex anyway ...
 :ready
+echo   proxy is up.
 
-echo.
-echo Codex 已连 DeepSeek 主模型（贴图自动切 Kimi）
-echo 快模型: codex -p flash  ^|  纯Kimi: codex -p kimi
-echo IDE 里用：先保持本代理窗口开着，再在 VS Code/Cursor 侧边栏打开 Codex 贴图
+where codex >nul 2>&1
+if errorlevel 1 (
+  echo.
+  echo [ERROR] 'codex' command not found. Open a NEW terminal, or run:
+  echo     npm i -g @openai/codex
+  echo.
+  pause
+  exit /b 1
+)
+
+echo [3/3] Launching Codex (model: deepseek) ...
+echo   fast model: codex -p flash   ^|   kimi only: codex -p kimi
+echo   For IDE: run Codex-IDE-Proxy.bat (keep open), then open Codex panel in VS Code/Cursor.
 echo.
 codex -p deepseek
+
+echo.
+echo Codex exited. Press any key to close.
+pause >nul
 "@
   Write-TextFile $launcher $launcherContent
-  Write-Ok "启动器 → $launcher"
+  Write-Ok "终端启动器 → $launcher"
 }
 
 Write-Host ""
@@ -410,6 +469,25 @@ if ($Source -eq "official") {
   Write-Host "  IDE ：VS Code/Cursor 侧边栏打开 Codex → Sign in with ChatGPT" -ForegroundColor DarkGray
 } else {
   Write-Host "  终端：双击 $launcher → 自动起代理 → 进 Codex（贴图自动 Kimi）" -ForegroundColor White
-  Write-Host "  IDE ：先双击启动器让代理常驻，再在 VS Code/Cursor 侧边栏用 Codex 贴图识图" -ForegroundColor DarkGray
+  Write-Host "  IDE ：双击「Codex-IDE-Proxy.bat」让代理常驻（窗口别关）→ VS Code/Cursor 侧边栏用 Codex" -ForegroundColor DarkGray
+}
+Write-Host ""
+
+# ─── 装完自动打开 IDE（顺带把 Codex 接进 VS Code/Cursor 的体验直接呈现）───
+$editor = Resolve-Editor
+if ($editor -and -not $NoExtension) {
+  if ($Source -ne "official") {
+    # 国产：先把代理在后台拉起来，让 IDE 里的 Codex 插件立刻能用（窗口最小化常驻）
+    try {
+      Start-Process "cmd.exe" -ArgumentList @("/c", "npx --yes @codeproxy/cli --config `"$ProxyConfig`" --host 127.0.0.1 --port $ProxyPort") -WindowStyle Minimized | Out-Null
+      Write-Ok "已在后台启动本地代理（端口 $ProxyPort）；重启电脑后用「启动Codex代理.bat」再起"
+    } catch { Write-Warn "后台代理启动失败，请手动双击「Codex-IDE-Proxy.bat」" }
+  }
+  try {
+    Write-Host "  正在打开 $editor，可在侧边栏直接用 Codex ..." -ForegroundColor White
+    & { $ErrorActionPreference = 'Continue'; & $editor 2>&1 | Out-Null }
+  } catch { Write-Skip "自动打开 $editor 失败，手动打开即可" }
+} else {
+  Write-Skip "未检测到 code/cursor 命令，手动打开 IDE 后在侧边栏用 Codex"
 }
 Write-Host ""

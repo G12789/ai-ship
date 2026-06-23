@@ -55,31 +55,35 @@ bash install-codex.sh --skip-system-install
 1. 装 Node / Git / VS Code（winget / brew，已装则升级），npm 默认走 npmmirror（国内免梯子）
 2. 装 **Codex CLI**（`npm i -g @openai/codex`，带重试，网络抖动不致命）
 3. 装 **Codex IDE 插件**（`openai.chatgpt`，自动装进检测到的 VS Code / Cursor / Windsurf）
-4. **国产**：提示 DeepSeek Key（必填）+ Kimi Key（可选）→ 写 `codeproxy.config.json` + `~/.codex/config.toml`（provider 指向本地代理 + 三个 profile + `preferred_auth_method=apikey`）+ 占位 `auth.json`
+4. **国产**：提示 DeepSeek Key（必填）+ Kimi Key（可选）→ 写 `~/.codex/codeproxy.config.json` + `~/.codex/config.toml`（provider 指向本地代理 + 三个 profile + `preferred_auth_method=apikey`）+ 占位 `auth.json`
    **官方**：跳过 Key/代理，写最简 `~/.codex/config.toml`（`model = "gpt-5.1-codex"`）
-5. 生成启动器 **`启动Codex.bat`** / `codex-start.sh`
+5. 生成启动器：终端版 **`启动Codex.bat`** / `codex-start.sh`；国产另生成 IDE 代理保活版 **`Codex-IDE-Proxy.bat`** / `codex-proxy.sh`
+   - Windows 启动器内容为**纯 ASCII**（避免中文 Windows 的 cmd 用 GBK 读 UTF-8 导致乱码）；找不到 `codex` 会**报错并暂停**，绝不闪退看不到错误
+6. 国产模式装完会**后台拉起代理 + 自动打开 IDE**，可直接在侧边栏用 Codex
 
 ## 日常使用
 
 **终端**：双击 `启动Codex.bat`（Mac/Linux：`bash codex-start.sh`）
 
-- 国产：自动起代理 → 进 Codex，默认 DeepSeek 写代码；快模型 `codex -p flash`；纯 Kimi `codex -p kimi`
+- 国产：自动起代理 → 探活就绪 → 进 Codex，默认 DeepSeek 写代码；快模型 `codex -p flash`；纯 Kimi `codex -p kimi`
 - 官方：首次 `codex login` 登录 ChatGPT 账号
+- 退出 Codex 后窗口会停在 `Press any key to close`，方便看任何报错
 
-**IDE 插件**：在 VS Code / Cursor 侧边栏打开 Codex
+**IDE 插件**：在 VS Code / Cursor 侧边栏打开 Codex（与 CLI 共用同一份 `~/.codex/config.toml`，官方文档明确支持）
 
-- 国产：**先让启动器/代理常驻**（保持那个窗口开着），插件即用本地代理，贴图自动 Kimi 识图
+- 国产：**先双击 `Codex-IDE-Proxy.bat`（Mac/Linux：`bash codex-proxy.sh`）让代理常驻**（窗口别关），插件即用本地代理，贴图自动 Kimi 识图。重启电脑后再跑一次即可
 - 官方：插件里 **Sign in with ChatGPT**
 
 ## 故障排查
 
 | 现象 | 原因 / 处理 |
 |------|------------|
+| 启动器闪一下就关、终端全是乱码 | 旧版 bug，已修：新版 `.bat` 纯 ASCII + 结尾 `pause`。重跑安装脚本重新生成启动器即可 |
 | banner 显示 `provider: openai` | config.toml 没生效，确认顶部 `model_provider = "local"` 且代理在 8787 运行 |
 | 404 / 空流 | 代理没起或上游协议不对，看代理窗口日志 |
-| 贴图没反应 | 没填 Kimi Key，或 `dropImages/fallback` 缺失 |
+| 贴图没反应 | 没填 Kimi Key（在 `~/.codex/codeproxy.config.json` 补 `kimi.apiKey`），或 `dropImages/fallback` 缺失 |
 | IDE 插件弹 ChatGPT 登录（国产） | 确认 `~/.codex/config.toml` 有 `preferred_auth_method = "apikey"` 且 `~/.codex/auth.json` 存在；重启 IDE |
-| IDE 插件没反应（国产） | 本地代理没常驻，先双击启动器让代理窗口开着 |
+| IDE 插件没反应（国产） | 本地代理没常驻，先双击 `Codex-IDE-Proxy.bat`（Mac/Linux：`bash codex-proxy.sh`）让代理窗口开着 |
 
 ## 验证状态
 
