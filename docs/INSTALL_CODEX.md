@@ -1,6 +1,6 @@
-﻿# Codex 一键安装：CLI 终端版 + IDE 插件（国产 / 官方可选）
+﻿# Codex 一键安装：CLI + 桌面 App + VS Code 插件（国产 / 官方可选）
 
-和 Claude Code 那套（`install.ps1` / `install.sh`）平级的全自动安装，目标是 **OpenAI Codex（CLI + VS Code 插件）**。
+和 Claude Code 那套（`install.ps1` / `install.sh`）平级的全自动安装，目标是 **OpenAI Codex（CLI + 桌面 App + VS Code 插件）**。
 
 装时可**选模型来源**（直接 Enter = 国产）：
 
@@ -11,7 +11,7 @@
 | 网络 | **国内无 VPN 可用** | 通常需梯子 |
 | 命令行指定 | `-Source domestic` / `--source domestic` | `-Source official` / `--source official` |
 
-> **CLI 与 IDE 插件共用 `~/.codex/config.toml`**，装完两端都生效。国产模式额外写 `preferred_auth_method = "apikey"` + 占位 `~/.codex/auth.json`，让 VS Code 的 Codex 插件**不弹 ChatGPT 登录**、直接走本地代理（插件里贴图也自动转 Kimi 识图）。
+> **CLI、桌面 App、IDE 插件共用 `~/.codex/config.toml`**，装完三种界面都生效。国产模式额外写 `preferred_auth_method = "apikey"` + 占位 `~/.codex/auth.json`，让 VS Code 的 Codex 插件**不弹 ChatGPT 登录**、直接走本地代理（插件里贴图也自动转 Kimi 识图）。
 
 ## 为什么 Codex 需要本地代理（和 Claude Code 的本质区别）
 
@@ -52,14 +52,13 @@ bash install-codex.sh --skip-system-install
 
 ## 安装做了什么
 
-1. 装 Node / Git / VS Code（winget / brew，已装则升级），npm 默认走 npmmirror（国内免梯子）
+1. 装 Node / Git / VS Code / **Codex 桌面 App**（winget msstore / brew cask，已装则升级），npm 默认走 npmmirror（国内免梯子）
 2. 装 **Codex CLI**（`npm i -g @openai/codex`，带重试，网络抖动不致命）
 3. 装 **Codex IDE 插件**（`openai.chatgpt`，只装进真正的 VS Code（与 Claude Code 一致，不进 Cursor））
-4. **国产**：提示 DeepSeek Key（必填）+ Kimi Key（可选）→ 写 `~/.codex/codeproxy.config.json` + `~/.codex/config.toml`（provider 指向本地代理 + 三个 profile + `preferred_auth_method=apikey`）+ 占位 `auth.json`
+4. **国产**：提示 DeepSeek Key（必填）+ Kimi Key（可选）→ 写 `~/.codex/codeproxy.config.json` + `~/.codex/config.toml`（provider 指向本地代理 + profile 文件 + `preferred_auth_method=apikey`）+ 占位 `auth.json`
    **官方**：跳过 Key/代理，写最简 `~/.codex/config.toml`（`model = "gpt-5.1-codex"`）
 5. 生成启动器：终端版 **`启动Codex.bat`** / `codex-start.sh`；国产另生成 IDE 代理保活版 **`Codex-IDE-Proxy.bat`** / `codex-proxy.sh`
-   - Windows 启动器内容为**纯 ASCII**（避免中文 Windows 的 cmd 用 GBK 读 UTF-8 导致乱码）；找不到 `codex` 会**报错并暂停**，绝不闪退看不到错误
-6. 国产模式装完会**后台拉起代理 + 自动打开 IDE**，可直接在侧边栏用 Codex
+6. 装完会**后台起代理（国产）+ 自动打开 Codex 桌面 App + VS Code**，三种界面立即可用
 
 ## 日常使用
 
@@ -69,7 +68,12 @@ bash install-codex.sh --skip-system-install
 - 官方：首次 `codex login` 登录 ChatGPT 账号
 - 退出 Codex 后窗口会停在 `Press any key to close`，方便看任何报错
 
-**IDE 插件**：在 VS Code 侧边栏打开 Codex（与 CLI 共用同一份 `~/.codex/config.toml`，官方文档明确支持）
+**桌面 App**（推荐，界面更完整）：开始菜单 / Launchpad 打开 **Codex**
+
+- 国产：需本地代理常驻（`Codex-IDE-Proxy.bat` / `codex-proxy.sh`），与 CLI/插件共用 `~/.codex` 配置
+- 官方：App 内 Sign in with ChatGPT
+
+**IDE 插件**：在 VS Code 侧边栏打开 Codex（与 CLI 共用同一份 `~/.codex/config.toml`）
 
 - 国产：**先双击 `Codex-IDE-Proxy.bat`（Mac/Linux：`bash codex-proxy.sh`）让代理常驻**（窗口别关），插件即用本地代理，贴图自动 Kimi 识图。重启电脑后再跑一次即可
 - 官方：插件里 **Sign in with ChatGPT**

@@ -1,15 +1,15 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-  Codex 一键安装：Node/Git/VS Code + Codex CLI(终端版) + Codex IDE 插件
+  Codex 一键安装：Node/Git/VS Code + Codex CLI + Codex 桌面 App + VS Code 插件
   支持两种模型来源（装时可选）：
     - 国产：DeepSeek 写代码 + Kimi 自动识图（经本地 @codeproxy/cli 协议代理）
     - 官方：原生 gpt-5.x（用 ChatGPT 账号登录，需订阅）
 
 .DESCRIPTION
   Codex 0.128+ 只认 OpenAI Responses 协议，DeepSeek/Kimi 是 Chat Completions，
-  走国产时必须经本地 @codeproxy/cli 翻译；IDE 插件(openai.chatgpt)与 CLI 共用
-  ~/.codex/config.toml，故同一套配置终端与插件都生效（插件里贴图自动转 Kimi）。
+  走国产时必须经本地 @codeproxy/cli 翻译。CLI、桌面 App、IDE 插件(openai.chatgpt)
+  共用 ~/.codex/config.toml，装完三种界面都能用同一套配置。
 
 .EXAMPLE
   irm https://raw.githubusercontent.com/G12789/ai-ship/master/install-codex.ps1 | iex
@@ -24,7 +24,8 @@ param(
   [string]$DeepseekKey = "",
   [string]$KimiKey = "",
   [string]$OutputDir = "",
-  [switch]$NoExtension
+  [switch]$NoExtension,
+  [switch]$NoDesktopApp
 )
 
 Set-StrictMode -Version Latest
@@ -43,6 +44,7 @@ if (-not (Test-Path -LiteralPath $CodexDir)) { New-Item -ItemType Directory -Pat
 $ProxyConfig = Join-Path $CodexDir "codeproxy.config.json"
 $ProxyPort = 8787
 $CodexExtId = "openai.chatgpt"
+$CodexAppStoreId = "9PLM9XGG6VKS"   # Microsoft Store: OpenAI Codex 桌面 App
 
 # 启动器里用 %USERPROFILE% 动态引用代理配置，保证 .bat 内容全 ASCII（防中文路径乱码）
 $ProxyConfigBat = '%USERPROFILE%\.codex\codeproxy.config.json'
@@ -202,6 +204,41 @@ function Install-CodexExtension {
   }
 }
 
+function Test-CodexDesktopAppInstalled {
+  $pkg = Get-AppxPackage -Name "OpenAI.Codex" -ErrorAction SilentlyContinue
+  if ($pkg) { return $true }
+  $list = winget list --id $CodexAppStoreId -s msstore -e --accept-source-agreements 2>$null
+  return [bool]($LASTEXITCODE -eq 0 -and ($list | Select-String -SimpleMatch $CodexAppStoreId))
+}
+
+function Install-CodexDesktopApp {
+  if ($NoDesktopApp) { Write-Skip "已指定 -NoDesktopApp，跳过 Codex 桌面 App"; return }
+  if (Test-CodexDesktopAppInstalled) {
+    Write-Host "  Codex 桌面 App 已安装 → 检查更新 ..."
+    winget upgrade --id $CodexAppStoreId -s msstore --accept-package-agreements --accept-source-agreements --disable-interactivity 2>$null | Out-Null
+    Write-Ok "Codex 桌面 App 已是最新（或已更新）"
+    return
+  }
+  Write-Host "  安装 Codex 桌面 App（Microsoft Store，界面比终端更完整）..."
+  & winget install --id $CodexAppStoreId -s msstore --accept-package-agreements --accept-source-agreements --disable-interactivity
+  if ((Test-CodexDesktopAppInstalled)) {
+    Write-Ok "Codex 桌面 App 已安装（与 CLI / VS Code 插件共用 ~/.codex 配置）"
+  } else {
+    Write-Warn "Codex 桌面 App 安装未确认（需 Microsoft Store）。可手动：winget install Codex -s msstore"
+  }
+}
+
+function Start-CodexDesktopApp {
+  try {
+    $app = Get-StartApps | Where-Object { $_.AppID -like "OpenAI.Codex*" } | Select-Object -First 1
+    if ($app) {
+      Start-Process "explorer.exe" -ArgumentList "shell:AppsFolder\$($app.AppID)"
+      return $true
+    }
+  } catch { }
+  return $false
+}
+
 # ─── 选择模型来源 ───────────────────────────────────────
 function Resolve-Source {
   if ($Source) { return $Source }
@@ -224,6 +261,7 @@ if (-not $SkipSystemInstall -and -not (Test-Admin)) {
       $argList = @("-NoProfile","-ExecutionPolicy","Bypass","-File","`"$self`"","-OutputDir","`"$OutputDir`"")
       if ($Source) { $argList += @("-Source", $Source) }
       if ($NoExtension) { $argList += "-NoExtension" }
+      if ($NoDesktopApp) { $argList += "-NoDesktopApp" }
       Start-Process powershell.exe -ArgumentList $argList -Verb RunAs -ErrorAction Stop
       exit 0
     } catch { Write-Warn "提权取消，以普通权限继续（winget 用户级安装多数可用）" }
@@ -234,8 +272,8 @@ if (-not $SkipSystemInstall -and -not (Test-Admin)) {
 
 Write-Host ""
 Write-Host "======================================================" -ForegroundColor Magenta
-Write-Host "  Codex 一键安装（CLI 终端版 + IDE 插件）" -ForegroundColor Magenta
-Write-Host "  Node + Git + VS Code + Codex + 模型接入" -ForegroundColor Magenta
+Write-Host "  Codex 一键安装（CLI + 桌面 App + IDE 插件）" -ForegroundColor Magenta
+Write-Host "  Node + Git + VS Code + Codex App + 模型接入" -ForegroundColor Magenta
 Write-Host "======================================================" -ForegroundColor Magenta
 Write-Host "  配置输出目录: $OutputDir"
 
@@ -248,7 +286,7 @@ if ($Source -eq "official") {
 
 # ═══ 1. 系统依赖 ═══
 if (-not $SkipSystemInstall) {
-  Write-Step "1/6" "检测并安装系统依赖 (Node / Git / VS Code)"
+  Write-Step "1/6" "检测并安装系统依赖 (Node / Git / VS Code / Codex 桌面 App)"
   if (-not (Test-Command winget)) { throw "未找到 winget，请先从 Microsoft Store 装「应用安装程序」。" }
   $nm = Get-NodeMajor
   if ($nm -lt 18) { Ensure-WingetPackage "OpenJS.NodeJS.LTS" "Node.js LTS" } else { Write-Ok "Node $(node -v) 已够新" }
@@ -256,8 +294,10 @@ if (-not $SkipSystemInstall) {
   if (-not (Test-Command node)) { throw "Node 安装后仍不可用，请重开终端再跑。" }
   Ensure-WingetPackage "Git.Git" "Git"
   Ensure-WingetPackage "Microsoft.VisualStudioCode" "Visual Studio Code"
+  Install-CodexDesktopApp
 } else {
   Write-Step "1/6" "跳过系统安装 (-SkipSystemInstall)"; Refresh-Path
+  if (-not $NoDesktopApp) { Install-CodexDesktopApp }
 }
 
 # ═══ 2. Codex CLI（国产再装代理）═══
@@ -534,28 +574,40 @@ if ($script:InstallWarnings.Count -gt 0) {
 }
 if ($Source -eq "official") {
   Write-Host "  终端：双击 $launcher（或命令行 codex），首次 codex login 登录 ChatGPT" -ForegroundColor White
+  Write-Host "  桌面 App：开始菜单搜 Codex 打开（界面更完整，与 CLI 共用配置）" -ForegroundColor DarkGray
   Write-Host "  IDE ：VS Code 侧边栏打开 Codex → Sign in with ChatGPT" -ForegroundColor DarkGray
 } else {
   Write-Host "  终端：双击 $launcher → 自动起代理 → 进 Codex（贴图自动 Kimi）" -ForegroundColor White
+  Write-Host "  桌面 App：开始菜单搜 Codex（国产需代理常驻，见 Codex-IDE-Proxy.bat）" -ForegroundColor DarkGray
   Write-Host "  IDE ：双击「Codex-IDE-Proxy.bat」让代理常驻（窗口别关）→ VS Code 侧边栏用 Codex" -ForegroundColor DarkGray
 }
 Write-Host ""
 
-# ─── 装完自动打开「真正的 VS Code」（与 Claude Code 一致），不开 Cursor ───
+# ─── 装完：起代理 → 打开 Codex 桌面 App + VS Code（与 Claude Code 一致）───
+$proxyStarted = $false
+if ($Source -ne "official") {
+  try {
+    Start-Process "cmd.exe" -ArgumentList @("/c", "npx --yes @codeproxy/cli --config `"$ProxyConfig`" --host 127.0.0.1 --port $ProxyPort") -WindowStyle Minimized | Out-Null
+    $proxyStarted = $true
+    Write-Ok "已在后台启动本地代理（端口 $ProxyPort）；重启电脑后用「Codex-IDE-Proxy.bat」再起"
+  } catch { Write-Warn "后台代理启动失败，请手动双击「Codex-IDE-Proxy.bat」" }
+}
+
+if (-not $NoDesktopApp) {
+  if (Start-CodexDesktopApp) {
+    Write-Ok "已打开 Codex 桌面 App（推荐，界面更完整）"
+  } elseif (Test-CodexDesktopAppInstalled) {
+    Write-Warn "Codex 桌面 App 已装但未能自动打开，请从开始菜单搜 Codex"
+  }
+}
+
 $vscodeOpen = Resolve-VsCode
 if ($vscodeOpen -and -not $NoExtension) {
-  if ($Source -ne "official") {
-    # 国产：先把代理在后台拉起来，让 VS Code 里的 Codex 插件立刻能用（窗口最小化常驻）
-    try {
-      Start-Process "cmd.exe" -ArgumentList @("/c", "npx --yes @codeproxy/cli --config `"$ProxyConfig`" --host 127.0.0.1 --port $ProxyPort") -WindowStyle Minimized | Out-Null
-      Write-Ok "已在后台启动本地代理（端口 $ProxyPort）；重启电脑后用「Codex-IDE-Proxy.bat」再起"
-    } catch { Write-Warn "后台代理启动失败，请手动双击「Codex-IDE-Proxy.bat」" }
-  }
   try {
     Write-Host "  正在打开 VS Code，可在侧边栏直接用 Codex ..." -ForegroundColor White
     & { $ErrorActionPreference = 'Continue'; & $vscodeOpen 2>&1 | Out-Null }
   } catch { Write-Skip "自动打开 VS Code 失败，手动打开即可" }
-} else {
+} elseif (-not $NoExtension) {
   Write-Skip "未找到真正的 VS Code（PATH 上的 code 可能是 Cursor），手动打开 VS Code 后在侧边栏用 Codex"
 }
 Write-Host ""

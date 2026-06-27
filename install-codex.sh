@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Codex 一键安装 — macOS / Linux
-# Node/Git/VS Code + Codex CLI(终端版) + Codex IDE 插件
+# Node/Git/VS Code + Codex CLI + Codex 桌面 App + VS Code 插件
 # 模型来源装时可选：
 #   - 国产：DeepSeek 写代码 + Kimi 自动识图（经本地 @codeproxy/cli 协议代理）
 #   - 官方：原生 gpt-5.x（ChatGPT 账号登录，需订阅）
@@ -13,6 +13,7 @@ set -euo pipefail
 SKIP_SYSTEM_INSTALL=0
 SOURCE=""
 NO_EXTENSION=0
+NO_DESKTOP_APP=0
 DEEPSEEK_KEY=""
 KIMI_KEY=""
 OUTPUT_DIR=""
@@ -27,11 +28,12 @@ while [[ $# -gt 0 ]]; do
     --skip-system-install) SKIP_SYSTEM_INSTALL=1; shift ;;
     --source) SOURCE="${2:-}"; shift 2 ;;
     --no-extension) NO_EXTENSION=1; shift ;;
+    --no-desktop-app) NO_DESKTOP_APP=1; shift ;;
     --deepseek-key) DEEPSEEK_KEY="${2:-}"; shift 2 ;;
     --kimi-key) KIMI_KEY="${2:-}"; shift 2 ;;
     --output-dir) OUTPUT_DIR="${2:-}"; shift 2 ;;
     -h|--help)
-      echo "bash install-codex.sh [--skip-system-install] [--source domestic|official] [--no-extension] [--output-dir DIR]"
+      echo "bash install-codex.sh [--skip-system-install] [--source domestic|official] [--no-extension] [--no-desktop-app] [--output-dir DIR]"
       echo "环境变量: DEEPSEEK_API_KEY / KIMI_API_KEY"
       exit 0 ;;
     *) echo "未知参数: $1" >&2; exit 1 ;;
@@ -119,6 +121,35 @@ install_codex_extension() {
   return 0
 }
 
+install_codex_desktop_app() {
+  [[ "$NO_DESKTOP_APP" -eq 1 ]] && { echo "  - 已指定 --no-desktop-app，跳过 Codex 桌面 App"; return; }
+  if [[ "$(uname -s)" != "Darwin" ]]; then
+    echo "  - Linux 暂无 Codex 桌面 App 包，跳过（可用 CLI + VS Code 插件）"
+    return
+  fi
+  if ! has brew; then
+    warn "未找到 Homebrew，无法自动装 Codex 桌面 App。可手动：brew install --cask codex-app"
+    return
+  fi
+  if brew list --cask codex-app &>/dev/null; then
+    echo "  Codex 桌面 App 已安装 → 检查更新 ..."
+    brew upgrade --cask codex-app 2>/dev/null || true
+    ok "Codex 桌面 App 已是最新（或已更新）"
+  else
+    echo "  安装 Codex 桌面 App（brew cask）..."
+    if brew install --cask codex-app; then
+      ok "Codex 桌面 App 已安装（与 CLI / VS Code 插件共用 ~/.codex 配置）"
+    else
+      warn "Codex 桌面 App 安装未确认，可手动：brew install --cask codex-app"
+    fi
+  fi
+}
+
+open_codex_desktop_app() {
+  [[ "$NO_DESKTOP_APP" -eq 1 ]] && return
+  [[ "$(uname -s)" == "Darwin" ]] && open -a "Codex" 2>/dev/null && ok "已打开 Codex 桌面 App" || true
+}
+
 # 打开真正的 VS Code（不开 Cursor）
 open_vscode() {
   has code && code . >/dev/null 2>&1 || true
@@ -127,7 +158,7 @@ open_vscode() {
 echo ""
 echo "======================================================"
 echo "  Codex 一键安装 (macOS / Linux)"
-echo "  CLI 终端版 + IDE 插件 + 模型接入"
+echo "  CLI + 桌面 App + IDE 插件 + 模型接入"
 echo "======================================================"
 echo "  配置输出目录: ${OUTPUT_DIR}"
 
@@ -141,12 +172,13 @@ fi
 
 # ── 1. 系统依赖 ──
 if [[ "$SKIP_SYSTEM_INSTALL" -eq 0 ]]; then
-  step "1/6" "检测并安装系统依赖 (Node / Git / VS Code)"
+  step "1/6" "检测并安装系统依赖 (Node / Git / VS Code / Codex 桌面 App)"
   if [[ "$(uname -s)" == "Darwin" ]]; then
     if ! has brew; then echo "未找到 Homebrew，请先装: https://brew.sh" >&2; exit 1; fi
     if [[ "$(node_major)" -lt 18 ]]; then brew install node@22 && brew link --overwrite --force node@22 2>/dev/null || true; else ok "Node $(node -v) 已够新"; fi
     brew list git &>/dev/null || brew install git
     brew list --cask visual-studio-code &>/dev/null || brew install --cask visual-studio-code || true
+    install_codex_desktop_app
   else
     if [[ "$(node_major)" -lt 18 ]]; then
       if has apt-get; then sudo apt-get update && sudo apt-get install -y nodejs npm git || true
@@ -158,6 +190,7 @@ if [[ "$SKIP_SYSTEM_INSTALL" -eq 0 ]]; then
   has node || { echo "Node 不可用，请重开终端再试" >&2; exit 1; }
 else
   step "1/6" "跳过系统安装"; refresh_path
+  install_codex_desktop_app
 fi
 
 # ── 2. Codex CLI（国产再装代理）──
@@ -344,19 +377,22 @@ else
 fi
 if [[ "$SOURCE" == "official" ]]; then
   echo "  终端: bash ${LAUNCHER}（或 codex），首次 codex login 登录 ChatGPT"
+  echo "  桌面 App: 打开 Codex（macOS，界面更完整）"
   echo "  IDE : VS Code 侧边栏打开 Codex → Sign in with ChatGPT"
 else
   echo "  终端: bash ${LAUNCHER} → 自动起代理 → 进 Codex（贴图自动 Kimi）"
+  echo "  桌面 App: 打开 Codex（国产需代理常驻，见 codex-proxy.sh）"
   echo "  IDE : 先运行 codex-proxy.sh 让代理常驻，再在 VS Code 侧边栏用 Codex 贴图识图"
 fi
 echo ""
 
-# 国产模式后台拉起代理，并打开真正的 VS Code（不开 Cursor）
+# 国产模式后台拉起代理，打开 Codex 桌面 App + VS Code
+if [[ "$SOURCE" != "official" ]]; then
+  nohup npx --yes @codeproxy/cli --config "${PROXY_CONFIG}" --host 127.0.0.1 --port ${PROXY_PORT} >/tmp/codeproxy.log 2>&1 &
+  ok "已在后台启动本地代理（端口 ${PROXY_PORT}）；重启后用 codex-proxy.sh 再起"
+fi
+open_codex_desktop_app
 if [[ "$NO_EXTENSION" -ne 1 ]] && has code; then
-  if [[ "$SOURCE" != "official" ]]; then
-    nohup npx --yes @codeproxy/cli --config "${PROXY_CONFIG}" --host 127.0.0.1 --port ${PROXY_PORT} >/tmp/codeproxy.log 2>&1 &
-    ok "已在后台启动本地代理（端口 ${PROXY_PORT}）；重启后用 codex-proxy.sh 再起"
-  fi
   echo "  正在打开 VS Code，可在侧边栏直接用 Codex ..."
   open_vscode
 fi
