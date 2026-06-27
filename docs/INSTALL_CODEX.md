@@ -57,10 +57,12 @@ bash install-codex.sh --skip-system-install
 3. 装 **Codex IDE 插件**（`openai.chatgpt`，只装进真正的 VS Code（与 Claude Code 一致，不进 Cursor））
 4. **国产**：提示 DeepSeek Key（必填）+ Kimi Key（可选）→ 写 `~/.codex/codeproxy.config.json` + `~/.codex/config.toml`（provider 指向本地代理 + profile 文件 + `preferred_auth_method=apikey`）+ 占位 `auth.json`
    **官方**：跳过 Key/代理，写最简 `~/.codex/config.toml`（`model = "gpt-5.1-codex"`）
-5. 生成启动器：终端版 **`启动Codex.bat`** / `codex-start.sh`；国产另生成 IDE 代理保活版 **`Codex-IDE-Proxy.bat`** / `codex-proxy.sh`
-6. 装完会**后台起代理（国产）+ 自动打开 Codex 桌面 App + VS Code**，三种界面立即可用
+5. 生成启动器：终端版 **`启动Codex.bat`** / `codex-start.sh`；国产另生成 **`Codex-Proxy-Ensure.bat`** / `codex-proxy-ensure.sh`（后台静默起代理，不用一直开着窗口）、**`启动Codex全套.bat`** / `launch-codex-full.sh`
+6. **注册登录自动起代理**（Windows 启动文件夹 / macOS LaunchAgent / Linux autostart），装完会**确保代理在跑 + 自动打开 Codex 桌面 App + VS Code**
 
 ## 日常使用
+
+**日常（国产，推荐）**：**直接打开 Codex App 或 VS Code 即可**——登录后代理会在后台自动跑，不用先开代理窗口。
 
 **终端**：双击 `启动Codex.bat`（Mac/Linux：`bash codex-start.sh`）
 
@@ -68,14 +70,16 @@ bash install-codex.sh --skip-system-install
 - 官方：首次 `codex login` 登录 ChatGPT 账号
 - 退出 Codex 后窗口会停在 `Press any key to close`，方便看任何报错
 
+**全套一次打开**：双击 **`启动Codex全套.bat`**（Mac/Linux：`bash launch-codex-full.sh`）→ 代理 + App + VS Code
+
 **桌面 App**（推荐，界面更完整）：开始菜单 / Launchpad 打开 **Codex**
 
-- 国产：需本地代理常驻（`Codex-IDE-Proxy.bat` / `codex-proxy.sh`），与 CLI/插件共用 `~/.codex` 配置
+- 国产：与 CLI/插件共用 `~/.codex` 配置，代理登录后自动在后台跑
 - 官方：App 内 Sign in with ChatGPT
 
 **IDE 插件**：在 VS Code 侧边栏打开 Codex（与 CLI 共用同一份 `~/.codex/config.toml`）
 
-- 国产：**先双击 `Codex-IDE-Proxy.bat`（Mac/Linux：`bash codex-proxy.sh`）让代理常驻**（窗口别关），插件即用本地代理，贴图自动 Kimi 识图。重启电脑后再跑一次即可
+- 国产：**直接打开 VS Code 用 Codex**，贴图自动 Kimi 识图。若代理未起，双击 `Codex-Proxy-Ensure.bat`（Mac/Linux：`bash codex-proxy-ensure.sh`）
 - 官方：插件里 **Sign in with ChatGPT**
 
 ## 故障排查
@@ -87,7 +91,7 @@ bash install-codex.sh --skip-system-install
 | 404 / 空流 | 代理没起或上游协议不对，看代理窗口日志 |
 | 贴图没反应 | 没填 Kimi Key（在 `~/.codex/codeproxy.config.json` 补 `kimi.apiKey`），或 `dropImages/fallback` 缺失 |
 | IDE 插件弹 ChatGPT 登录（国产） | 确认 `~/.codex/config.toml` 有 `preferred_auth_method = "apikey"` 且 `~/.codex/auth.json` 存在；重启 IDE |
-| IDE 插件没反应（国产） | 本地代理没常驻，先双击 `Codex-IDE-Proxy.bat`（Mac/Linux：`bash codex-proxy.sh`）让代理窗口开着 |
+| IDE 插件没反应（国产） | 代理没在跑：双击 `Codex-Proxy-Ensure.bat`（Mac/Linux：`bash codex-proxy-ensure.sh`），或重跑安装脚本注册登录自动起代理 |
 
 ## 验证状态
 

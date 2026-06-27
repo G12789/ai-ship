@@ -14,6 +14,7 @@ SKIP_SYSTEM_INSTALL=0
 SOURCE=""
 NO_EXTENSION=0
 NO_DESKTOP_APP=0
+NO_AUTO_START=0
 DEEPSEEK_KEY=""
 KIMI_KEY=""
 OUTPUT_DIR=""
@@ -29,11 +30,12 @@ while [[ $# -gt 0 ]]; do
     --source) SOURCE="${2:-}"; shift 2 ;;
     --no-extension) NO_EXTENSION=1; shift ;;
     --no-desktop-app) NO_DESKTOP_APP=1; shift ;;
+    --no-auto-start) NO_AUTO_START=1; shift ;;
     --deepseek-key) DEEPSEEK_KEY="${2:-}"; shift 2 ;;
     --kimi-key) KIMI_KEY="${2:-}"; shift 2 ;;
     --output-dir) OUTPUT_DIR="${2:-}"; shift 2 ;;
     -h|--help)
-      echo "bash install-codex.sh [--skip-system-install] [--source domestic|official] [--no-extension] [--no-desktop-app] [--output-dir DIR]"
+      echo "bash install-codex.sh [--skip-system-install] [--source domestic|official] [--no-extension] [--no-desktop-app] [--no-auto-start] [--output-dir DIR]"
       echo "环境变量: DEEPSEEK_API_KEY / KIMI_API_KEY"
       exit 0 ;;
     *) echo "未知参数: $1" >&2; exit 1 ;;
@@ -153,6 +155,97 @@ open_codex_desktop_app() {
 # 打开真正的 VS Code（不开 Cursor）
 open_vscode() {
   has code && code . >/dev/null 2>&1 || true
+}
+
+test_codex_proxy_running() {
+  curl -s --max-time 2 "http://127.0.0.1:${PROXY_PORT}/v1/models" >/dev/null 2>&1
+}
+
+ensure_codex_proxy_running() {
+  if test_codex_proxy_running; then return 0; fi
+  nohup npx --yes @codeproxy/cli --config "${PROXY_CONFIG}" --host 127.0.0.1 --port "${PROXY_PORT}" >>/tmp/codeproxy.log 2>&1 &
+  local i
+  for i in $(seq 1 15); do
+    sleep 1
+    test_codex_proxy_running && return 0
+  done
+  return 1
+}
+
+write_proxy_ensure_script() {
+  local dest="$1"
+  cat > "$dest" <<ESH
+#!/usr/bin/env bash
+PROXY_PORT=${PROXY_PORT}
+PROXY_CONFIG="${PROXY_CONFIG}"
+SILENT=0
+[[ "\${1:-}" == "silent" ]] && SILENT=1
+
+test_proxy() {
+  curl -s --max-time 2 "http://127.0.0.1:\${PROXY_PORT}/v1/models" >/dev/null 2>&1
+}
+
+if test_proxy; then
+  [[ "\$SILENT" -eq 0 ]] && echo "Codex proxy already running on 127.0.0.1:\${PROXY_PORT}"
+  exit 0
+fi
+
+nohup npx --yes @codeproxy/cli --config "\${PROXY_CONFIG}" --host 127.0.0.1 --port "\${PROXY_PORT}" >>/tmp/codeproxy.log 2>&1 &
+for i in \$(seq 1 15); do
+  sleep 1
+  if test_proxy; then
+    [[ "\$SILENT" -eq 0 ]] && echo "Proxy started in background. Open Codex App or VS Code directly."
+    exit 0
+  fi
+done
+exit 0
+ESH
+  chmod +x "$dest"
+}
+
+register_codex_proxy_autostart() {
+  [[ "$NO_AUTO_START" -eq 1 ]] && { echo "  - 已指定 --no-auto-start，跳过登录时自动起代理"; return; }
+  local ensure_script="${OUTPUT_DIR}/codex-proxy-ensure.sh"
+  [[ -x "$ensure_script" ]] || { warn "未找到 codex-proxy-ensure.sh，跳过自动起代理"; return; }
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    local plist="${HOME}/Library/LaunchAgents/com.ai-ship.codex-proxy.plist"
+    mkdir -p "$(dirname "$plist")"
+    cat > "$plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.ai-ship.codex-proxy</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>${ensure_script}</string>
+    <string>silent</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <false/>
+</dict>
+</plist>
+PLIST
+    launchctl unload "$plist" 2>/dev/null || true
+    launchctl load "$plist" 2>/dev/null || true
+    ok "已注册登录自动起代理 → ${plist}（日常直接打开 App / VS Code 即可）"
+  elif mkdir -p "${HOME}/.config/autostart" 2>/dev/null; then
+    local desktop="${HOME}/.config/autostart/codex-proxy-ensure.desktop"
+    cat > "$desktop" <<DESK
+[Desktop Entry]
+Type=Application
+Name=Codex Proxy Ensure
+Comment=Start Codex local proxy in background if needed
+Exec=${ensure_script} silent
+X-GNOME-Autostart-enabled=true
+DESK
+    ok "已注册登录自动起代理 → ${desktop}（日常直接打开 VS Code 即可）"
+  else
+    warn "无法注册登录自动起代理，可手动运行 codex-proxy-ensure.sh"
+  fi
 }
 
 echo ""
@@ -328,17 +421,30 @@ TOML
   step "5/6" "安装 Codex IDE 插件"
   install_codex_extension
 
-  step "6/6" "生成启动器（终端版 codex-start.sh + IDE 代理版 codex-proxy.sh）"
+  step "6/6" "生成启动器 + 注册登录自动起代理"
 
-  # IDE 代理保活：只起代理并常驻，IDE 用 Codex 前先跑它（别关）
+  PROXY_ENSURE="${OUTPUT_DIR}/codex-proxy-ensure.sh"
+  write_proxy_ensure_script "$PROXY_ENSURE"
+  ok "代理 ensure → ${PROXY_ENSURE}（缺代理时在后台静默拉起）"
+
+  # 兼容旧文件名：内容与 ensure 相同，不再要求「窗口别关」
   PROXYSH="${OUTPUT_DIR}/codex-proxy.sh"
-  cat > "$PROXYSH" <<PSH
+  write_proxy_ensure_script "$PROXYSH"
+  ok "兼容旧名 → ${PROXYSH}"
+
+  FULLSH="${OUTPUT_DIR}/launch-codex-full.sh"
+  cat > "$FULLSH" <<FSH
 #!/usr/bin/env bash
-echo "启动本地协议代理 (端口 ${PROXY_PORT})，IDE 用 Codex 期间请保持本窗口开着..."
-exec npx --yes @codeproxy/cli --config "${PROXY_CONFIG}" --host 127.0.0.1 --port ${PROXY_PORT}
-PSH
-  chmod +x "$PROXYSH"
-  ok "IDE 代理保活 → ${PROXYSH}"
+cd "\$HOME"
+"${PROXY_ENSURE}" silent
+[[ "\$(uname -s)" == "Darwin" ]] && open -a "Codex" 2>/dev/null || true
+command -v code >/dev/null 2>&1 && code . >/dev/null 2>&1 || true
+echo "Launched: Codex App + VS Code (proxy runs in background)."
+FSH
+  chmod +x "$FULLSH"
+  ok "全套启动 → ${FULLSH}"
+
+  register_codex_proxy_autostart
 
   LAUNCHER="${OUTPUT_DIR}/codex-start.sh"
   cat > "$LAUNCHER" <<LSH
@@ -356,7 +462,7 @@ for i in \$(seq 1 30); do
   sleep 1
 done
 echo "Codex 已连 DeepSeek（贴图自动 Kimi）。快模型: codex -p flash | 纯Kimi: codex -p kimi"
-echo "IDE 里用：跑 codex-proxy.sh 让代理常驻，再在 VS Code 侧边栏打开 Codex 贴图"
+echo "App/VS Code: open directly (proxy auto-starts at login)."
 codex
 LSH
   chmod +x "$LAUNCHER"
@@ -380,16 +486,19 @@ if [[ "$SOURCE" == "official" ]]; then
   echo "  桌面 App: 打开 Codex（macOS，界面更完整）"
   echo "  IDE : VS Code 侧边栏打开 Codex → Sign in with ChatGPT"
 else
-  echo "  终端: bash ${LAUNCHER} → 自动起代理 → 进 Codex（贴图自动 Kimi）"
-  echo "  桌面 App: 打开 Codex（国产需代理常驻，见 codex-proxy.sh）"
-  echo "  IDE : 先运行 codex-proxy.sh 让代理常驻，再在 VS Code 侧边栏用 Codex 贴图识图"
+  echo "  日常: 直接打开 Codex App 或 VS Code 即可（登录后代理自动在后台跑）"
+  echo "  终端: bash ${LAUNCHER}"
+  echo "  全套: bash ${OUTPUT_DIR}/launch-codex-full.sh（代理 + App + VS Code 一次打开）"
 fi
 echo ""
 
-# 国产模式后台拉起代理，打开 Codex 桌面 App + VS Code
+# 国产模式确保代理在跑，打开 Codex 桌面 App + VS Code
 if [[ "$SOURCE" != "official" ]]; then
-  nohup npx --yes @codeproxy/cli --config "${PROXY_CONFIG}" --host 127.0.0.1 --port ${PROXY_PORT} >/tmp/codeproxy.log 2>&1 &
-  ok "已在后台启动本地代理（端口 ${PROXY_PORT}）；重启后用 codex-proxy.sh 再起"
+  if ensure_codex_proxy_running; then
+    ok "本地代理已在后台运行（127.0.0.1:${PROXY_PORT}）；重启后也会自动起"
+  else
+    warn "代理未能确认就绪，可运行 codex-proxy-ensure.sh"
+  fi
 fi
 open_codex_desktop_app
 if [[ "$NO_EXTENSION" -ne 1 ]] && has code; then

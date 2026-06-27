@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
   Codex 一键安装：Node/Git/VS Code + Codex CLI + Codex 桌面 App + VS Code 插件
@@ -25,7 +25,8 @@ param(
   [string]$KimiKey = "",
   [string]$OutputDir = "",
   [switch]$NoExtension,
-  [switch]$NoDesktopApp
+  [switch]$NoDesktopApp,
+  [switch]$NoAutoStart
 )
 
 Set-StrictMode -Version Latest
@@ -192,15 +193,15 @@ function Install-CodexExtension {
   if ($NoExtension) { Write-Skip "已指定 -NoExtension，跳过 VS Code 插件"; return }
   $vscode = Resolve-VsCode
   if (-not $vscode) {
-    Write-Warn "未找到真正的 VS Code（PATH 上的 code 可能是 Cursor）。请装 Microsoft VS Code 后，在其扩展面板搜「Codex」(OpenAI) 安装"
+    Write-Warn "未找到真正的 VS Code（PATH 上的 code 可能是 Cursor）。请装 Microsoft VS Code 后，在其扩展面板搜 Codex / OpenAI 安装"
     return
   }
   Write-Host "  安装/更新 VS Code 扩展 $CodexExtId（最多等 180 秒，点号=进行中）..."
   $r = Install-VsCodeExtension $vscode $CodexExtId 180
   switch ($r) {
     "ok"      { Write-Ok "Codex 插件已装入 VS Code：$vscode（侧边栏可贴图识图）" }
-    "timeout" { Write-Warn "装 Codex 插件超时（网络），可稍后在 VS Code 扩展面板搜「Codex」(OpenAI) 手动装" }
-    default   { Write-Warn "装 Codex 插件未确认，可在 VS Code 扩展面板搜「Codex」(OpenAI) 手动装" }
+    "timeout" { Write-Warn "装 Codex 插件超时（网络），可稍后在 VS Code 扩展面板搜 Codex / OpenAI 手动装" }
+    default   { Write-Warn "装 Codex 插件未确认，可在 VS Code 扩展面板搜 Codex / OpenAI 手动装" }
   }
 }
 
@@ -239,6 +240,80 @@ function Start-CodexDesktopApp {
   return $false
 }
 
+function Test-CodexProxyRunning {
+  try {
+    & curl.exe -s --max-time 2 "http://127.0.0.1:$ProxyPort/v1/models" 2>$null | Out-Null
+    return ($LASTEXITCODE -eq 0)
+  } catch { return $false }
+}
+
+function Ensure-CodexProxyRunning {
+  if (Test-CodexProxyRunning) { return $true }
+  try {
+    Start-Process "cmd.exe" -ArgumentList @(
+      "/c", "start `"Codex Proxy BG`" /min cmd /c npx --yes @codeproxy/cli --config `"$ProxyConfig`" --host 127.0.0.1 --port $ProxyPort"
+    ) -WindowStyle Hidden | Out-Null
+    for ($i = 0; $i -lt 15; $i++) {
+      Start-Sleep -Seconds 1
+      if (Test-CodexProxyRunning) { return $true }
+    }
+  } catch { }
+  return $false
+}
+
+function Get-CodexProxyEnsureBatContent([switch]$SilentOnly) {
+  if ($SilentOnly) {
+    return @"
+@echo off
+curl -s http://127.0.0.1:$ProxyPort/v1/models >nul 2>&1
+if not errorlevel 1 exit /b 0
+start "Codex Proxy BG" /min cmd /c npx --yes @codeproxy/cli --config "$ProxyConfigBat" --host 127.0.0.1 --port $ProxyPort
+exit /b 0
+"@
+  }
+  return @"
+@echo off
+chcp 65001 >nul
+if /I "%~1"=="silent" goto run
+curl -s http://127.0.0.1:$ProxyPort/v1/models >nul 2>&1
+if not errorlevel 1 (
+  echo Codex proxy already running on 127.0.0.1:$ProxyPort
+  timeout /t 2 >nul
+  exit /b 0
+)
+:run
+curl -s http://127.0.0.1:$ProxyPort/v1/models >nul 2>&1
+if not errorlevel 1 exit /b 0
+start "Codex Proxy BG" /min cmd /c npx --yes @codeproxy/cli --config "$ProxyConfigBat" --host 127.0.0.1 --port $ProxyPort
+set /a tries=0
+:wait
+ping -n 2 127.0.0.1 >nul
+curl -s http://127.0.0.1:$ProxyPort/v1/models >nul 2>&1
+if not errorlevel 1 goto done
+set /a tries+=1
+if %tries% lss 15 goto wait
+:done
+if /I not "%~1"=="silent" (
+  echo Proxy started in background. Open Codex App or VS Code directly.
+  timeout /t 2 >nul
+)
+exit /b 0
+"@
+}
+
+function Register-CodexProxyAutoStart {
+  if ($NoAutoStart) { Write-Skip "已指定 -NoAutoStart，跳过登录时自动起代理"; return }
+  try {
+    $startup = [Environment]::GetFolderPath("Startup")
+    if (-not $startup) { Write-Warn "无法定位 Windows 启动文件夹，跳过自动起代理"; return }
+    $dest = Join-Path $startup "Codex-Proxy-AutoStart.bat"
+    Write-TextFile $dest (Get-CodexProxyEnsureBatContent -SilentOnly)
+    Write-Ok "已注册登录自动起代理 → $dest（日常直接打开 App / VS Code 即可）"
+  } catch {
+    Write-Warn "注册登录自动起代理失败，可手动双击 Codex-Proxy-Ensure.bat"
+  }
+}
+
 # ─── 选择模型来源 ───────────────────────────────────────
 function Resolve-Source {
   if ($Source) { return $Source }
@@ -262,6 +337,7 @@ if (-not $SkipSystemInstall -and -not (Test-Admin)) {
       if ($Source) { $argList += @("-Source", $Source) }
       if ($NoExtension) { $argList += "-NoExtension" }
       if ($NoDesktopApp) { $argList += "-NoDesktopApp" }
+      if ($NoAutoStart) { $argList += "-NoAutoStart" }
       Start-Process powershell.exe -ArgumentList $argList -Verb RunAs -ErrorAction Stop
       exit 0
     } catch { Write-Warn "提权取消，以普通权限继续（winget 用户级安装多数可用）" }
@@ -492,27 +568,45 @@ stream_idle_timeout_ms = 300000
   Write-Step "5/6" "安装 Codex IDE 插件"
   Install-CodexExtension
 
-  Write-Step "6/6" "生成启动器（终端版 + IDE 代理版）"
+  Write-Step "6/6" "生成启动器 + 注册登录自动起代理"
 
-  # 代理保活脚本：只起代理并常驻。IDE 用 Codex 前先双击它（窗口别关）。
-  # 文件名与内容都用 ASCII，避免中文 Windows 下 cmd 用 GBK 读 UTF-8 .bat 产生乱码。
+  # 后台.ensure 代理（不阻塞、不用一直开着这个窗口）
+  $proxyEnsureBat = Join-Path $OutputDir "Codex-Proxy-Ensure.bat"
+  Write-TextFile $proxyEnsureBat (Get-CodexProxyEnsureBatContent)
+  Write-Ok "代理.ensure → $proxyEnsureBat（缺代理时在后台静默拉起）"
+
+  # 兼容旧文件名：内容与 Ensure 相同，不再要求「窗口别关」
   $proxyBat = Join-Path $OutputDir "Codex-IDE-Proxy.bat"
-  $proxyContent = @"
+  Write-TextFile $proxyBat (Get-CodexProxyEnsureBatContent)
+  Write-Ok "兼容旧名 → $proxyBat"
+
+  # 全套：代理 + App + VS Code
+  $fullBat = Join-Path $OutputDir "Launch-Codex-Full.bat"
+  $fullBatCn = Join-Path $OutputDir "启动Codex全套.bat"
+  $fullContent = @"
 @echo off
 chcp 65001 >nul
-title Codex Proxy (DeepSeek + Kimi) - keep open for IDE
-echo Starting local proxy on 127.0.0.1:$ProxyPort ...
-echo Keep this window OPEN while using Codex in VS Code / Cursor.
-echo.
-npx --yes @codeproxy/cli --config "$ProxyConfigBat" --host 127.0.0.1 --port $ProxyPort
-echo.
-echo [proxy stopped] Press any key to close.
-pause >nul
-"@
-  Write-TextFile $proxyBat $proxyContent
-  Write-Ok "IDE 代理保活 → $proxyBat"
+title Codex Full (Proxy + App + VS Code)
+cd /d "%USERPROFILE%"
 
-  # 终端版：起代理 -> 等就绪 -> 进 Codex；任何异常都 pause，绝不闪退看不到错误。
+call "%~dp0Codex-Proxy-Ensure.bat" silent
+
+powershell -NoProfile -Command "try { `$a = Get-StartApps | Where-Object { `$_.AppID -like 'OpenAI.Codex*' } | Select-Object -First 1; if (`$a) { Start-Process explorer.exe ('shell:AppsFolder/' + `$a.AppID) } } catch {}"
+
+set "VSCODE=%LOCALAPPDATA%\Programs\Microsoft VS Code\Code.exe"
+if exist "%VSCODE%" (start "" "%VSCODE%") else (where code >nul 2>&1 && start "" code)
+
+echo.
+echo Launched: Codex App + VS Code (proxy runs minimized in background).
+timeout /t 2 >nul
+"@
+  Write-TextFile $fullBat $fullContent
+  Write-TextFile $fullBatCn $fullContent
+  Write-Ok "全套启动 → $fullBatCn"
+
+  Register-CodexProxyAutoStart
+
+  # 终端版：起代理 -> 等就绪 -> 进 Codex
   $launcher = Join-Path $OutputDir "启动Codex.bat"
   $launcherContent = @"
 @echo off
@@ -547,7 +641,7 @@ if errorlevel 1 (
 
 echo [3/3] Launching Codex (default model: deepseek) ...
 echo   fast model: codex -p flash   ^|   kimi only: codex -p kimi
-echo   For IDE: run Codex-IDE-Proxy.bat (keep open), then open Codex panel in VS Code.
+echo   App/VS Code: open directly (proxy auto-starts at login).
 echo.
 codex
 
@@ -577,20 +671,19 @@ if ($Source -eq "official") {
   Write-Host "  桌面 App：开始菜单搜 Codex 打开（界面更完整，与 CLI 共用配置）" -ForegroundColor DarkGray
   Write-Host "  IDE ：VS Code 侧边栏打开 Codex → Sign in with ChatGPT" -ForegroundColor DarkGray
 } else {
-  Write-Host "  终端：双击 $launcher → 自动起代理 → 进 Codex（贴图自动 Kimi）" -ForegroundColor White
-  Write-Host "  桌面 App：开始菜单搜 Codex（国产需代理常驻，见 Codex-IDE-Proxy.bat）" -ForegroundColor DarkGray
-  Write-Host "  IDE ：双击「Codex-IDE-Proxy.bat」让代理常驻（窗口别关）→ VS Code 侧边栏用 Codex" -ForegroundColor DarkGray
+  Write-Host "  日常：直接打开 Codex App 或 VS Code 即可（登录后代理自动在后台跑）" -ForegroundColor White
+  Write-Host "  终端：双击 $launcher" -ForegroundColor DarkGray
+  Write-Host "  全套：双击「启动Codex全套.bat」（代理 + App + VS Code 一次打开）" -ForegroundColor DarkGray
 }
 Write-Host ""
 
-# ─── 装完：起代理 → 打开 Codex 桌面 App + VS Code（与 Claude Code 一致）───
-$proxyStarted = $false
+# ─── 装完：确保代理在跑 → 打开 Codex 桌面 App + VS Code ───
 if ($Source -ne "official") {
-  try {
-    Start-Process "cmd.exe" -ArgumentList @("/c", "npx --yes @codeproxy/cli --config `"$ProxyConfig`" --host 127.0.0.1 --port $ProxyPort") -WindowStyle Minimized | Out-Null
-    $proxyStarted = $true
-    Write-Ok "已在后台启动本地代理（端口 $ProxyPort）；重启电脑后用「Codex-IDE-Proxy.bat」再起"
-  } catch { Write-Warn "后台代理启动失败，请手动双击「Codex-IDE-Proxy.bat」" }
+  if (Ensure-CodexProxyRunning) {
+    Write-Ok "本地代理已在后台运行（127.0.0.1:$ProxyPort）；重启后也会自动起"
+  } else {
+    Write-Warn "代理未能确认就绪，可双击 Codex-Proxy-Ensure.bat"
+  }
 }
 
 if (-not $NoDesktopApp) {
