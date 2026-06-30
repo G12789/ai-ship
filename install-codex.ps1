@@ -17,28 +17,75 @@
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File .\install-codex.ps1 -SkipSystemInstall -Source domestic
 #>
-param(
-  [switch]$SkipSystemInstall,
-  [ValidateSet("", "domestic", "official")]
-  [string]$Source = "",
-  [string]$DeepseekKey = "",
-  [string]$KimiKey = "",
-  [string]$OutputDir = "",
-  [switch]$NoExtension,
-  [switch]$NoDesktopApp,
-  [switch]$NoAutoStart
-)
-
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 try { Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force -ErrorAction SilentlyContinue } catch { }
 if (-not $env:npm_config_registry) { $env:npm_config_registry = "https://registry.npmmirror.com" }
 
+# 不用 param()：Windows PowerShell 5.1 下 irm | iex 会在 param 处解析失败。
+# 改用手动解析，同时兼容 -File 与 irm | iex 两种入口。
+$SkipSystemInstall = $false
+$Source = ""
+$DeepseekKey = ""
+$KimiKey = ""
+$OutputDir = ""
+$NoExtension = $false
+$NoDesktopApp = $false
+$NoAutoStart = $false
+
+function Initialize-InstallArgs([object[]]$RawArgs) {
+  for ($i = 0; $i -lt $RawArgs.Count; $i++) {
+    $a = [string]$RawArgs[$i]
+    switch ($a) {
+      "-SkipSystemInstall" { $script:SkipSystemInstall = $true; continue }
+      "-NoExtension" { $script:NoExtension = $true; continue }
+      "-NoDesktopApp" { $script:NoDesktopApp = $true; continue }
+      "-NoAutoStart" { $script:NoAutoStart = $true; continue }
+      "-Source" {
+        if ($i + 1 -ge $RawArgs.Count) { throw "-Source 需要 domestic 或 official" }
+        $script:Source = [string]$RawArgs[++$i]
+        if ($script:Source -notin @("", "domestic", "official")) { throw "-Source 只能是 domestic 或 official" }
+        continue
+      }
+      "-DeepseekKey" {
+        if ($i + 1 -ge $RawArgs.Count) { throw "-DeepseekKey 需要值" }
+        $script:DeepseekKey = [string]$RawArgs[++$i]; continue
+      }
+      "-KimiKey" {
+        if ($i + 1 -ge $RawArgs.Count) { throw "-KimiKey 需要值" }
+        $script:KimiKey = [string]$RawArgs[++$i]; continue
+      }
+      "-OutputDir" {
+        if ($i + 1 -ge $RawArgs.Count) { throw "-OutputDir 需要路径" }
+        $script:OutputDir = [string]$RawArgs[++$i]; continue
+      }
+      default { throw "未知参数: $a" }
+    }
+  }
+}
+Initialize-InstallArgs -RawArgs @($args)
+
+$CodexInstallUrl = "https://raw.githubusercontent.com/G12789/ai-ship/master/install-codex.ps1"
+
+function Get-InstallScriptPath {
+  if ($PSCommandPath -and (Test-Path -LiteralPath $PSCommandPath)) { return $PSCommandPath }
+  $cached = Join-Path $env:TEMP "install-codex.ps1"
+  try {
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    Invoke-WebRequest -Uri $CodexInstallUrl -OutFile $cached -UseBasicParsing
+  } catch {
+    throw "irm | iex 模式下无法缓存安装脚本，请检查网络: $_"
+  }
+  return $cached
+}
+
 $CodexDir = Join-Path $env:USERPROFILE ".codex"
 $CodexConfig = Join-Path $CodexDir "config.toml"
 $CodexAuth = Join-Path $CodexDir "auth.json"
-if (-not $OutputDir) { $OutputDir = (Get-Location).Path }
+if (-not $OutputDir) {
+  $OutputDir = Join-Path ([Environment]::GetFolderPath("Desktop")) "Codex-DeepSeek-Kimi双模型"
+}
 if (-not (Test-Path -LiteralPath $OutputDir)) { New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null }
 # 代理配置放 ~/.codex（ASCII 路径），启动器里用 %USERPROFILE% 引用，避免项目目录含中文导致 .bat 乱码
 if (-not (Test-Path -LiteralPath $CodexDir)) { New-Item -ItemType Directory -Path $CodexDir -Force | Out-Null }
@@ -304,11 +351,32 @@ exit /b 0
 function Register-CodexProxyAutoStart {
   if ($NoAutoStart) { Write-Skip "已指定 -NoAutoStart，跳过登录时自动起代理"; return }
   try {
+    # 固定路径 ~/.codex/，避免启动器目录被删后开机自启失效
+    $stableBat = Join-Path $CodexDir "Codex-Proxy-AutoStart.bat"
+    Write-TextFile $stableBat (Get-CodexProxyEnsureBatContent -SilentOnly)
+
     $startup = [Environment]::GetFolderPath("Startup")
-    if (-not $startup) { Write-Warn "无法定位 Windows 启动文件夹，跳过自动起代理"; return }
-    $dest = Join-Path $startup "Codex-Proxy-AutoStart.bat"
-    Write-TextFile $dest (Get-CodexProxyEnsureBatContent -SilentOnly)
-    Write-Ok "已注册登录自动起代理 → $dest（日常直接打开 App / VS Code 即可）"
+    if ($startup) {
+      $dest = Join-Path $startup "Codex-Proxy-AutoStart.bat"
+      Write-TextFile $dest "@echo off`r`ncall `"$stableBat`""
+      Write-Ok "已注册启动文件夹 → $dest"
+    } else {
+      Write-Warn "无法定位 Windows 启动文件夹"
+    }
+
+    $taskName = "CodexProxyAutoStart"
+    $tr = "`"$stableBat`""
+    & schtasks.exe /Query /TN $taskName /FO LIST 2>$null | Out-Null
+    if ($LASTEXITCODE -eq 0) {
+      & schtasks.exe /Change /TN $taskName /TR $tr /SC ONLOGON /RL LIMITED /F 2>$null | Out-Null
+    } else {
+      & schtasks.exe /Create /TN $taskName /TR $tr /SC ONLOGON /RL LIMITED /F 2>$null | Out-Null
+    }
+    if ($LASTEXITCODE -eq 0) {
+      Write-Ok "已注册计划任务 ONLOGON → $taskName（重启/重新登录后代理自动在后台起）"
+    } else {
+      Write-Warn "计划任务注册未确认（启动文件夹仍可用）"
+    }
   } catch {
     Write-Warn "注册登录自动起代理失败，可手动双击 Codex-Proxy-Ensure.bat"
   }
@@ -329,21 +397,23 @@ function Resolve-Source {
 
 # ─── 提权 ───────────────────────────────────────────────
 if (-not $SkipSystemInstall -and -not (Test-Admin)) {
-  $self = if ($PSCommandPath) { $PSCommandPath } else { $null }
-  if ($self) {
-    Write-Host "  需要管理员权限装系统组件，正在请求提权（弹 UAC 点是）..." -ForegroundColor Yellow
-    try {
-      $argList = @("-NoProfile","-ExecutionPolicy","Bypass","-File","`"$self`"","-OutputDir","`"$OutputDir`"")
-      if ($Source) { $argList += @("-Source", $Source) }
-      if ($NoExtension) { $argList += "-NoExtension" }
-      if ($NoDesktopApp) { $argList += "-NoDesktopApp" }
-      if ($NoAutoStart) { $argList += "-NoAutoStart" }
-      Start-Process powershell.exe -ArgumentList $argList -Verb RunAs -ErrorAction Stop
-      exit 0
-    } catch { Write-Warn "提权取消，以普通权限继续（winget 用户级安装多数可用）" }
-  } else {
-    Write-Warn "非管理员、管道运行。建议用管理员 PowerShell 重跑；现以普通权限继续。"
-  }
+  Write-Host "  需要管理员权限装系统组件，正在请求提权（弹 UAC 点是）..." -ForegroundColor Yellow
+  try {
+    $self = Get-InstallScriptPath
+    $argList = @(
+      "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$self`"",
+      "-OutputDir", "`"$OutputDir`""
+    )
+    if ($SkipSystemInstall) { $argList += "-SkipSystemInstall" }
+    if ($Source) { $argList += @("-Source", $Source) }
+    if ($DeepseekKey) { $argList += @("-DeepseekKey", $DeepseekKey) }
+    if ($KimiKey) { $argList += @("-KimiKey", $KimiKey) }
+    if ($NoExtension) { $argList += "-NoExtension" }
+    if ($NoDesktopApp) { $argList += "-NoDesktopApp" }
+    if ($NoAutoStart) { $argList += "-NoAutoStart" }
+    Start-Process powershell.exe -ArgumentList $argList -Verb RunAs -ErrorAction Stop
+    exit 0
+  } catch { Write-Warn "提权取消，以普通权限继续（winget 用户级安装多数可用）" }
 }
 
 Write-Host ""
@@ -614,8 +684,8 @@ chcp 65001 >nul
 title Codex (DeepSeek + Kimi)
 cd /d "%USERPROFILE%"
 
-echo [1/3] Starting local proxy on 127.0.0.1:$ProxyPort ...
-start "Codex Proxy DeepSeek Kimi" /min cmd /c npx --yes @codeproxy/cli --config "$ProxyConfigBat" --host 127.0.0.1 --port $ProxyPort
+echo [1/3] Ensuring local proxy on 127.0.0.1:$ProxyPort ...
+call "%~dp0Codex-Proxy-Ensure.bat" silent
 
 echo [2/3] Waiting for proxy (first run may download, up to ~30s) ...
 set /a tries=0
