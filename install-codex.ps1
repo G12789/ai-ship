@@ -1,4 +1,4 @@
-﻿# Codex one-click install: Node/Git/VS Code + Codex CLI + App + VS Code extension
+# Codex one-click install: Node/Git/VS Code + Codex CLI + App + VS Code extension
 # Online: irm https://raw.githubusercontent.com/G12789/ai-ship/master/install-codex-oneline.ps1 | iex
 # Local:  powershell -ExecutionPolicy Bypass -File .\install-codex.ps1
 Set-StrictMode -Version Latest
