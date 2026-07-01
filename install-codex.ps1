@@ -352,8 +352,8 @@ function Start-CodexDesktopApp {
 
 function Test-CodexProxyRunning {
   try {
-    & curl.exe -s --max-time 2 "http://127.0.0.1:$ProxyPort/v1/models" 2>$null | Out-Null
-    return ($LASTEXITCODE -eq 0)
+    $code = (& curl.exe -s -o NUL -w "%{http_code}" --max-time 3 "http://127.0.0.1:$ProxyPort/v1/models" 2>$null)
+    return ($code -eq "200")
   } catch { return $false }
 }
 
@@ -363,10 +363,10 @@ function Ensure-CodexProxyRunning {
     Start-Process "cmd.exe" -ArgumentList @(
       "/c", "start `"Codex Proxy BG`" /min cmd /c npx --yes @codeproxy/cli --config `"$ProxyConfig`" --host 127.0.0.1 --port $ProxyPort"
     ) -WindowStyle Hidden | Out-Null
-    for ($i = 0; $i -lt 15; $i++) {
+    for ($i = 0; $i -lt 45; $i++) {
       $pos = ($i % 17)
       $fill = ("█" * $pos).PadRight(16, [char]0x2591)
-      Write-Host ("`r  ▸ 本地代理启动   [{0}]" -f $fill) -NoNewline -ForegroundColor Cyan
+      Write-Host ("`r  ▸ 本地代理启动   [{0}] {1,2}s" -f $fill, ($i + 1)) -NoNewline -ForegroundColor Cyan
       Start-Sleep -Seconds 1
       if (Test-CodexProxyRunning) { Write-Host ""; return $true }
     }
@@ -375,40 +375,104 @@ function Ensure-CodexProxyRunning {
   return $false
 }
 
+function New-DesktopShortcut {
+  param(
+    [string]$Name,
+    [string]$TargetPath,
+    [string]$Arguments = "",
+    [string]$WorkingDirectory = "",
+    [string]$IconLocation = ""
+  )
+  try {
+    $desktop = [Environment]::GetFolderPath("Desktop")
+    $lnk = Join-Path $desktop ($Name + ".lnk")
+    $shell = New-Object -ComObject WScript.Shell
+    $sc = $shell.CreateShortcut($lnk)
+    $sc.TargetPath = $TargetPath
+    if ($Arguments) { $sc.Arguments = $Arguments }
+    if ($WorkingDirectory) { $sc.WorkingDirectory = $WorkingDirectory } else { $sc.WorkingDirectory = $OutputDir }
+    if ($IconLocation -and (Test-Path $IconLocation)) { $sc.IconLocation = $IconLocation }
+    $sc.Description = "OpenClaw Codex"
+    $sc.Save()
+    [System.Runtime.InteropServices.Marshal]::ReleaseComObject($shell) | Out-Null
+    return $lnk
+  } catch {
+    return $null
+  }
+}
+
+function Install-DesktopShortcuts {
+  $fullBat = Join-Path $OutputDir "启动Codex全套.bat"
+  $proxyBat = Join-Path $OutputDir "Codex-Proxy-Ensure.bat"
+  $created = @()
+
+  if (Test-Path $fullBat) {
+    $p = New-DesktopShortcut -Name "Codex 一键启动" -TargetPath $fullBat -WorkingDirectory $OutputDir
+    if ($p) { $created += $p }
+  }
+  if (Test-Path $proxyBat) {
+    $p = New-DesktopShortcut -Name "Codex 代理修复" -TargetPath $proxyBat -WorkingDirectory $OutputDir
+    if ($p) { $created += $p }
+  }
+
+  try {
+    $app = Get-StartApps | Where-Object { $_.AppID -like "OpenAI.Codex*" } | Select-Object -First 1
+    if ($app) {
+      $p = New-DesktopShortcut -Name "Codex 桌面版" -TargetPath "explorer.exe" -Arguments "shell:AppsFolder\$($app.AppID)"
+      if ($p) { $created += $p }
+    }
+  } catch { }
+
+  if ($created.Count -gt 0) {
+    Write-Ok "已在桌面创建 $($created.Count) 个快捷方式：Codex 一键启动 / 代理修复 / 桌面版"
+  } else {
+    Write-Warn "未能创建桌面快捷方式，请手动双击文件夹内「启动Codex全套.bat」"
+  }
+}
+
 function Get-CodexProxyEnsureBatContent([switch]$SilentOnly) {
   if ($SilentOnly) {
     return @"
 @echo off
-curl -s http://127.0.0.1:$ProxyPort/v1/models >nul 2>&1
+curl -s -o NUL -w "%%{http_code}" --max-time 3 http://127.0.0.1:$ProxyPort/v1/models 2>nul | findstr /x "200" >nul
 if not errorlevel 1 exit /b 0
 start "Codex Proxy BG" /min cmd /c npx --yes @codeproxy/cli --config "$ProxyConfigBat" --host 127.0.0.1 --port $ProxyPort
-exit /b 0
+set /a tries=0
+:wait
+ping -n 2 127.0.0.1 >nul
+curl -s -o NUL -w "%%{http_code}" --max-time 3 http://127.0.0.1:$ProxyPort/v1/models 2>nul | findstr /x "200" >nul
+if not errorlevel 1 exit /b 0
+set /a tries+=1
+if %tries% lss 45 goto wait
+exit /b 1
 "@
   }
   return @"
 @echo off
 chcp 65001 >nul
 if /I "%~1"=="silent" goto run
-curl -s http://127.0.0.1:$ProxyPort/v1/models >nul 2>&1
+curl -s -o NUL -w "%%{http_code}" --max-time 3 http://127.0.0.1:$ProxyPort/v1/models 2>nul | findstr /x "200" >nul
 if not errorlevel 1 (
   echo Codex proxy already running on 127.0.0.1:$ProxyPort
   timeout /t 2 >nul
   exit /b 0
 )
 :run
-curl -s http://127.0.0.1:$ProxyPort/v1/models >nul 2>&1
+curl -s -o NUL -w "%%{http_code}" --max-time 3 http://127.0.0.1:$ProxyPort/v1/models 2>nul | findstr /x "200" >nul
 if not errorlevel 1 exit /b 0
 start "Codex Proxy BG" /min cmd /c npx --yes @codeproxy/cli --config "$ProxyConfigBat" --host 127.0.0.1 --port $ProxyPort
 set /a tries=0
 :wait
 ping -n 2 127.0.0.1 >nul
-curl -s http://127.0.0.1:$ProxyPort/v1/models >nul 2>&1
+curl -s -o NUL -w "%%{http_code}" --max-time 3 http://127.0.0.1:$ProxyPort/v1/models 2>nul | findstr /x "200" >nul
 if not errorlevel 1 goto done
 set /a tries+=1
-if %tries% lss 15 goto wait
+if %tries% lss 45 goto wait
+echo [ERROR] Proxy not ready on 127.0.0.1:$ProxyPort
+exit /b 1
 :done
 if /I not "%~1"=="silent" (
-  echo Proxy started in background. Open Codex App or VS Code directly.
+  echo Proxy ready. You can open Codex App or VS Code now.
   timeout /t 2 >nul
 )
 exit /b 0
@@ -725,16 +789,29 @@ chcp 65001 >nul
 title Codex Full (Proxy + App + VS Code)
 cd /d "%USERPROFILE%"
 
+echo [1/3] Starting local proxy (wait until ready) ...
 call "%~dp0Codex-Proxy-Ensure.bat" silent
+if errorlevel 1 (
+  echo [ERROR] Proxy failed. Double-click "Codex 代理修复" on desktop and retry.
+  pause
+  exit /b 1
+)
 
+echo [2/3] Opening Codex App ...
 powershell -NoProfile -Command "try { `$a = Get-StartApps | Where-Object { `$_.AppID -like 'OpenAI.Codex*' } | Select-Object -First 1; if (`$a) { Start-Process explorer.exe ('shell:AppsFolder/' + `$a.AppID) } } catch {}"
 
+echo [3/3] Opening VS Code with project folder ...
 set "VSCODE=%LOCALAPPDATA%\Programs\Microsoft VS Code\Code.exe"
-if exist "%VSCODE%" (start "" "%VSCODE%") else (where code >nul 2>&1 && start "" code)
+set "PROJ=%~dp0"
+if exist "%VSCODE%" (
+  start "" "%VSCODE%" "%PROJ%"
+) else (
+  where code >nul 2>&1 && start "" code "%PROJ%"
+)
 
 echo.
-echo Launched: Codex App + VS Code (proxy runs minimized in background).
-timeout /t 2 >nul
+echo Done: proxy + Codex App + VS Code. In VS Code open the CODEX tab to chat.
+timeout /t 3 >nul
 "@
   Write-TextFile $fullBat $fullContent
   Write-TextFile $fullBatCn $fullContent
@@ -787,6 +864,8 @@ pause >nul
 "@
   Write-TextFile $launcher $launcherContent
   Write-Ok "终端启动器 → $launcher"
+
+  Install-DesktopShortcuts
 }
 
 Write-Host ""
@@ -816,27 +895,31 @@ Write-Host ""
 # ─── 装完：确保代理在跑 → 打开 Codex 桌面 App + VS Code ───
 if ($Source -ne "official") {
   if (Ensure-CodexProxyRunning) {
-    Write-Ok "本地代理已在后台运行（127.0.0.1:$ProxyPort）；重启后也会自动起"
+    Write-Ok "本地代理已就绪（127.0.0.1:$ProxyPort HTTP 200）；重启后也会自动起"
   } else {
-    Write-Warn "代理未能确认就绪，可双击 Codex-Proxy-Ensure.bat"
+    Write-Warn "代理未能就绪 → 502 请双击桌面「Codex 代理修复」"
   }
 }
 
 if (-not $NoDesktopApp) {
-  if (Start-CodexDesktopApp) {
-    Write-Ok "已打开 Codex 桌面 App（推荐，界面更完整）"
-  } elseif (Test-CodexDesktopAppInstalled) {
-    Write-Warn "Codex 桌面 App 已装但未能自动打开，请从开始菜单搜 Codex"
+  if (Ensure-CodexProxyRunning) {
+    if (Start-CodexDesktopApp) {
+      Write-Ok "已打开 Codex 桌面 App（推荐，界面更完整）"
+    } elseif (Test-CodexDesktopAppInstalled) {
+      Write-Warn "Codex 桌面 App 已装但未能自动打开，请双击桌面「Codex 桌面版」"
+    }
   }
 }
 
 $vscodeOpen = Resolve-VsCode
 if ($vscodeOpen -and -not $NoExtension) {
   try {
-    Write-Host "  正在打开 VS Code，可在侧边栏直接用 Codex ..." -ForegroundColor White
-    & { $ErrorActionPreference = 'Continue'; & $vscodeOpen 2>&1 | Out-Null }
-  } catch { Write-Skip "自动打开 VS Code 失败，手动打开即可" }
+    Write-Host "  正在打开 VS Code（已加载项目文件夹，Codex 插件才能用）..." -ForegroundColor White
+    & { $ErrorActionPreference = 'Continue'; & $vscodeOpen $OutputDir 2>&1 | Out-Null }
+  } catch { Write-Skip "自动打开 VS Code 失败，请 File → Open Folder：$OutputDir" }
 } elseif (-not $NoExtension) {
   Write-Skip "未找到真正的 VS Code（PATH 上的 code 可能是 Cursor），手动打开 VS Code 后在侧边栏用 Codex"
 }
+Write-Host ""
+Write-Host "  重要：请用桌面「Codex 一键启动」，不要单独开 Codex App（否则可能 502）" -ForegroundColor Yellow
 Write-Host ""
