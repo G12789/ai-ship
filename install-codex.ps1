@@ -1,5 +1,4 @@
-﻿#Requires -Version 5.1
-<#
+﻿<#
 .SYNOPSIS
   Codex 一键安装：Node/Git/VS Code + Codex CLI + Codex 桌面 App + VS Code 插件
   支持两种模型来源（装时可选）：
@@ -65,6 +64,10 @@ function Initialize-InstallArgs([object[]]$RawArgs) {
   }
 }
 Initialize-InstallArgs -RawArgs @($args)
+
+if ($PSVersionTable.PSVersion.Major -lt 5 -or ($PSVersionTable.PSVersion.Major -eq 5 -and $PSVersionTable.PSVersion.Minor -lt 1)) {
+  throw "需要 PowerShell 5.1 或更高版本"
+}
 
 $CodexInstallUrl = "https://raw.githubusercontent.com/G12789/ai-ship/master/install-codex.ps1"
 
@@ -388,8 +391,8 @@ function Resolve-Source {
   if ($DeepseekKey) { return "domestic" }
   Write-Host ""
   Write-Host "  选择模型来源：" -ForegroundColor White
-  Write-Host "    [1] 国产 DeepSeek 写代码 + Kimi 识图（便宜，国内无 VPN 可用）  ← 默认" -ForegroundColor Gray
-  Write-Host "    [2] 官方原生 gpt-5.x（用 ChatGPT 账号登录，需订阅 + 通常需梯子）" -ForegroundColor Gray
+  Write-Host "    [1] 国产 DeepSeek 写代码 + Kimi 识图（便宜，国内直连可用）  ← 默认" -ForegroundColor Gray
+  Write-Host "    [2] 官方原生 gpt-5.x（用 ChatGPT 账号登录，需订阅）" -ForegroundColor Gray
   $c = Read-Host "  输入 1 或 2（直接 Enter = 1）"
   if ($c -eq "2") { return "official" }
   return "domestic"

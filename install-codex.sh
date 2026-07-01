@@ -21,7 +21,7 @@ OUTPUT_DIR=""
 PROXY_PORT=8787
 CODEX_EXT_ID="openai.chatgpt"
 
-# npm 走国内镜像（未自定义时），保证国内无 VPN 也能装 codex / 代理包
+# npm 走国内镜像（未自定义时），保证国内网络也能装 codex / 代理包
 [[ -n "${npm_config_registry:-}" ]] || export npm_config_registry="https://registry.npmmirror.com"
 
 while [[ $# -gt 0 ]]; do
@@ -94,8 +94,8 @@ resolve_source() {
     {
       echo ""
       echo "  选择模型来源："
-      echo "    [1] 国产 DeepSeek 写代码 + Kimi 识图（便宜，国内无 VPN 可用）  ← 默认"
-      echo "    [2] 官方原生 gpt-5.x（ChatGPT 账号登录，需订阅 + 通常需梯子）"
+      echo "    [1] 国产 DeepSeek 写代码 + Kimi 识图（便宜，国内直连可用）  ← 默认"
+      echo "    [2] 官方原生 gpt-5.x（ChatGPT 账号登录，需订阅）"
     } >&2
     local c=""; read -r -p "  输入 1 或 2（Enter=1）: " c </dev/tty || c=""
     [[ "$c" == "2" ]] && { echo "official"; return; }

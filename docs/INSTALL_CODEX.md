@@ -8,7 +8,7 @@
 |--|--------------|------|
 | 模型 | DeepSeek 写代码 + Kimi 识图 | 原生 `gpt-5.x` |
 | 登录 | 无需登录，本地代理直连 | ChatGPT 账号（需订阅） |
-| 网络 | **国内无 VPN 可用** | 通常需梯子 |
+| 网络 | **国内直连可用** | 需 ChatGPT 订阅 |
 | 命令行指定 | `-Source domestic` / `--source domestic` | `-Source official` / `--source official` |
 
 > **CLI、桌面 App、IDE 插件共用 `~/.codex/config.toml`**，装完三种界面都生效。国产模式额外写 `preferred_auth_method = "apikey"` + 占位 `~/.codex/auth.json`，让 VS Code 的 Codex 插件**不弹 ChatGPT 登录**、直接走本地代理（插件里贴图也自动转 Kimi 识图）。
