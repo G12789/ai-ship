@@ -1,21 +1,6 @@
-﻿<#
-.SYNOPSIS
-  Codex 一键安装：Node/Git/VS Code + Codex CLI + Codex 桌面 App + VS Code 插件
-  支持两种模型来源（装时可选）：
-    - 国产：DeepSeek 写代码 + Kimi 自动识图（经本地 @codeproxy/cli 协议代理）
-    - 官方：原生 gpt-5.x（用 ChatGPT 账号登录，需订阅）
-
-.DESCRIPTION
-  Codex 0.128+ 只认 OpenAI Responses 协议，DeepSeek/Kimi 是 Chat Completions，
-  走国产时必须经本地 @codeproxy/cli 翻译。CLI、桌面 App、IDE 插件(openai.chatgpt)
-  共用 ~/.codex/config.toml，装完三种界面都能用同一套配置。
-
-.EXAMPLE
-  irm https://raw.githubusercontent.com/G12789/ai-ship/master/install-codex.ps1 | iex
-
-.EXAMPLE
-  powershell -ExecutionPolicy Bypass -File .\install-codex.ps1 -SkipSystemInstall -Source domestic
-#>
+﻿# Codex one-click install: Node/Git/VS Code + Codex CLI + App + VS Code extension
+# Online: irm https://raw.githubusercontent.com/G12789/ai-ship/master/install-codex-oneline.ps1 | iex
+# Local:  powershell -ExecutionPolicy Bypass -File .\install-codex.ps1
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 

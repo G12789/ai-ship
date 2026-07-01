@@ -30,7 +30,7 @@
 ### Windows
 
 ```powershell
-irm https://raw.githubusercontent.com/G12789/ai-ship/master/install-codex.ps1 | iex
+irm https://raw.githubusercontent.com/G12789/ai-ship/master/install-codex-oneline.ps1 | iex
 ```
 
 或本地：`powershell -ExecutionPolicy Bypass -File .\install-codex.ps1`
@@ -52,7 +52,7 @@ bash install-codex.sh --skip-system-install
 
 ## 安装做了什么
 
-1. 装 Node / Git / VS Code / **Codex 桌面 App**（winget msstore / brew cask，已装则升级），npm 默认走 npmmirror（国内免梯子）
+1. 装 Node / Git / VS Code / **Codex 桌面 App**（winget msstore / brew cask，已装则升级），npm 默认走 npmmirror（国内镜像加速）
 2. 装 **Codex CLI**（`npm i -g @openai/codex`，带重试，网络抖动不致命）
 3. 装 **Codex IDE 插件**（`openai.chatgpt`，只装进真正的 VS Code（与 Claude Code 一致，不进 Cursor））
 4. **国产**：提示 DeepSeek Key（必填）+ Kimi Key（可选）→ 写 `~/.codex/codeproxy.config.json` + `~/.codex/config.toml`（provider 指向本地代理 + profile 文件 + `preferred_auth_method=apikey`）+ 占位 `auth.json`
