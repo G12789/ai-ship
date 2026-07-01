@@ -389,7 +389,7 @@ function Test-CodexUpstream {
   # 真实连通性测试：给上游发一条最小请求，验证 Key/模型可用（录屏里可显示成功）。
   $probe = [ordered]@{
     model  = "deepseek-v4-pro"
-    input  = @([ordered]@{ role = "user"; content = @([ordered]@{ type = "input_text"; text = "ping" }) })
+    input  = @([ordered]@{ type = "message"; role = "user"; content = @([ordered]@{ type = "input_text"; text = "ping" }) })
     stream = $false
   } | ConvertTo-Json -Depth 12
   try {
