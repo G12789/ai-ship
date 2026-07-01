@@ -134,7 +134,10 @@ function Install-VsCodeExtension([string]$CodeCmd, [string]$Ext, [int]$TimeoutSe
     $elapsed = 0; $exited = $false
     while ($elapsed -lt $TimeoutSec) {
       if ($p.WaitForExit(2000)) { $exited = $true; break }
-      $elapsed += 2; Write-Host "." -NoNewline -ForegroundColor DarkGray
+      $elapsed += 2
+      $pos = (($elapsed / 2) % 17)
+      $fill = ("█" * $pos).PadRight(16, [char]0x2591)
+      Write-Host ("`r  ▸ VS Code 插件   [{0}]" -f $fill) -NoNewline -ForegroundColor Magenta
     }
     Write-Host ""
     if (-not $exited) { & cmd /c "taskkill /PID $($p.Id) /T /F" 2>&1 | Out-Null }
@@ -151,6 +154,69 @@ function Write-Skip([string]$m) { Write-Host "  --  $m" -ForegroundColor DarkGra
 $script:InstallWarnings = @()
 function Write-Warn([string]$m) { Write-Host "  !!  $m" -ForegroundColor Yellow; $script:InstallWarnings += $m }
 
+function Write-CodexBanner {
+  Write-Host ""
+  @(
+    "  ╔══════════════════════════════════════════════════════════════════╗"
+    "  ║                                                                  ║"
+    "  ║        OpenClaw  ·  Codex  ·  DeepSeek + Kimi                    ║"
+    "  ║                                                                  ║"
+    "  ║           一 键 安 装  ·  CLI + 桌面 App + VS Code 插件           ║"
+    "  ║                                                                  ║"
+    "  ║      Node  ·  Git  ·  VS Code  ·  Codex App  ·  模型接入          ║"
+    "  ║                                                                  ║"
+    "  ╚══════════════════════════════════════════════════════════════════╝"
+  ) | ForEach-Object { Write-Host $_ -ForegroundColor Magenta }
+  Write-Host ""
+}
+
+# 检查/已安装组件：快速进度条（录屏友好）
+function Show-CheckBar([string]$Label, [int]$DurationMs = 900) {
+  $width = 32
+  $delay = [math]::Max(8, [int]($DurationMs / $width))
+  for ($i = 1; $i -le $width; $i++) {
+    $fill = ("█" * $i).PadRight($width, [char]0x2591)
+    $pct = [int](($i * 100) / $width)
+    Write-Host ("`r  ▸ {0,-16} [{1}] {2,3}%" -f $Label, $fill, $pct) -NoNewline -ForegroundColor Cyan
+    Start-Sleep -Milliseconds $delay
+  }
+  Write-Host ("`r  ▸ {0,-16} [{1}] 100%" -f $Label, ("█" * $width)) -ForegroundColor Green
+  Write-Host ""
+}
+
+# 安装/更新/下载：后台进程跑着，前台进度条刷刷刷
+function Invoke-ProcessWithBar {
+  param(
+    [string]$Label,
+    [string]$FilePath,
+    [string[]]$ArgumentList,
+    [int]$TickMs = 90
+  )
+  $width = 32
+  $p = Start-Process -FilePath $FilePath -ArgumentList $ArgumentList -PassThru -NoNewWindow -Wait:$false
+  $i = 0
+  while (-not $p.HasExited) {
+    $pos = ($i % ($width + 1))
+    $fill = ("█" * $pos).PadRight($width, [char]0x2591)
+    Write-Host ("`r  ▸ {0,-16} [{1}]" -f $Label, $fill) -NoNewline -ForegroundColor Magenta
+    Start-Sleep -Milliseconds $TickMs
+    $i++
+  }
+  Write-Host ("`r  ▸ {0,-16} [{1}] 完成" -f $Label, ("█" * $width)) -ForegroundColor Green
+  Write-Host ""
+  return $p.ExitCode
+}
+
+function Invoke-WingetBar([string]$Label, [string[]]$WingetArgs) {
+  $prev = $ErrorActionPreference
+  $ErrorActionPreference = "Continue"
+  try {
+    return (Invoke-ProcessWithBar -Label $Label -FilePath "winget.exe" -ArgumentList $WingetArgs)
+  } finally {
+    $ErrorActionPreference = $prev
+  }
+}
+
 function Refresh-Path {
   $machine = [Environment]::GetEnvironmentVariable("Path", "Machine")
   $user = [Environment]::GetEnvironmentVariable("Path", "User")
@@ -163,14 +229,16 @@ function Test-WingetInstalled([string]$Id) {
   return [bool]($LASTEXITCODE -eq 0 -and ($list | Select-String -SimpleMatch $Id))
 }
 function Ensure-WingetPackage([string]$Id, [string]$Label) {
+  $wingetBase = @("-e", "--accept-package-agreements", "--accept-source-agreements", "--disable-interactivity")
   if (Test-WingetInstalled $Id) {
+    Show-CheckBar $Label 900
     Write-Host "  $Label 已安装 → 检查更新 ..."
-    winget upgrade --id $Id -e --accept-package-agreements --accept-source-agreements --disable-interactivity 2>$null | Out-Null
+    $null = Invoke-WingetBar "$Label 更新" (@("upgrade", "--id", $Id) + $wingetBase)
     Write-Ok "$Label 已是最新（或已更新）"; Refresh-Path; return
   }
   Write-Host "  安装 $Label ..."
-  winget install --id $Id -e --accept-package-agreements --accept-source-agreements --disable-interactivity
-  if ($LASTEXITCODE -ne 0) { throw "winget 安装失败: $Id (exit $LASTEXITCODE)" }
+  $code = Invoke-WingetBar "$Label 安装" (@("install", "--id", $Id) + $wingetBase)
+  if ($code -ne 0) { throw "winget 安装失败: $Id (exit $code)" }
   Write-Ok "$Label 安装完成"; Refresh-Path
 }
 function Get-NodeMajor {
@@ -186,8 +254,8 @@ function Invoke-NpmInstall([string]$Pkg, [string]$Label) {
   $okFlag = $false
   for ($i = 1; $i -le 3; $i++) {
     try {
-      & npm.cmd install -g $Pkg 2>&1 | Out-Null
-      if ($LASTEXITCODE -eq 0) { $okFlag = $true; break }
+      $code = Invoke-ProcessWithBar "$Label 安装" "npm.cmd" @("install", "-g", $Pkg)
+      if ($code -eq 0) { $okFlag = $true; break }
     } catch { }
     if ($i -lt 3) { Write-Host "  $Label 第 $i 次未成功（多为网络抖动），重试 ..." -ForegroundColor DarkGray; Start-Sleep -Seconds 2 }
   }
@@ -231,7 +299,7 @@ function Install-CodexExtension {
     Write-Warn "未找到真正的 VS Code（PATH 上的 code 可能是 Cursor）。请装 Microsoft VS Code 后，在其扩展面板搜 Codex / OpenAI 安装"
     return
   }
-  Write-Host "  安装/更新 VS Code 扩展 $CodexExtId（最多等 180 秒，点号=进行中）..."
+  Write-Host "  安装/更新 VS Code 扩展 $CodexExtId（进度条跑满即完成）..."
   $r = Install-VsCodeExtension $vscode $CodexExtId 180
   switch ($r) {
     "ok"      { Write-Ok "Codex 插件已装入 VS Code：$vscode（侧边栏可贴图识图）" }
@@ -250,13 +318,20 @@ function Test-CodexDesktopAppInstalled {
 function Install-CodexDesktopApp {
   if ($NoDesktopApp) { Write-Skip "已指定 -NoDesktopApp，跳过 Codex 桌面 App"; return }
   if (Test-CodexDesktopAppInstalled) {
+    Show-CheckBar "Codex App" 900
     Write-Host "  Codex 桌面 App 已安装 → 检查更新 ..."
-    winget upgrade --id $CodexAppStoreId -s msstore --accept-package-agreements --accept-source-agreements --disable-interactivity 2>$null | Out-Null
+    $null = Invoke-WingetBar "Codex App 更新" @(
+      "upgrade", "--id", $CodexAppStoreId, "-s", "msstore",
+      "--accept-package-agreements", "--accept-source-agreements", "--disable-interactivity"
+    )
     Write-Ok "Codex 桌面 App 已是最新（或已更新）"
     return
   }
   Write-Host "  安装 Codex 桌面 App（Microsoft Store，界面比终端更完整）..."
-  & winget install --id $CodexAppStoreId -s msstore --accept-package-agreements --accept-source-agreements --disable-interactivity
+  $code = Invoke-WingetBar "Codex App 安装" @(
+    "install", "--id", $CodexAppStoreId, "-s", "msstore",
+    "--accept-package-agreements", "--accept-source-agreements", "--disable-interactivity"
+  )
   if ((Test-CodexDesktopAppInstalled)) {
     Write-Ok "Codex 桌面 App 已安装（与 CLI / VS Code 插件共用 ~/.codex 配置）"
   } else {
@@ -289,9 +364,13 @@ function Ensure-CodexProxyRunning {
       "/c", "start `"Codex Proxy BG`" /min cmd /c npx --yes @codeproxy/cli --config `"$ProxyConfig`" --host 127.0.0.1 --port $ProxyPort"
     ) -WindowStyle Hidden | Out-Null
     for ($i = 0; $i -lt 15; $i++) {
+      $pos = ($i % 17)
+      $fill = ("█" * $pos).PadRight(16, [char]0x2591)
+      Write-Host ("`r  ▸ 本地代理启动   [{0}]" -f $fill) -NoNewline -ForegroundColor Cyan
       Start-Sleep -Seconds 1
-      if (Test-CodexProxyRunning) { return $true }
+      if (Test-CodexProxyRunning) { Write-Host ""; return $true }
     }
+    Write-Host ""
   } catch { }
   return $false
 }
@@ -404,11 +483,7 @@ if (-not $SkipSystemInstall -and -not (Test-Admin)) {
   } catch { Write-Warn "提权取消，以普通权限继续（winget 用户级安装多数可用）" }
 }
 
-Write-Host ""
-Write-Host "======================================================" -ForegroundColor Magenta
-Write-Host "  Codex 一键安装（CLI + 桌面 App + IDE 插件）" -ForegroundColor Magenta
-Write-Host "  Node + Git + VS Code + Codex App + 模型接入" -ForegroundColor Magenta
-Write-Host "======================================================" -ForegroundColor Magenta
+Write-CodexBanner
 Write-Host "  配置输出目录: $OutputDir"
 
 $Source = Resolve-Source
@@ -423,7 +498,10 @@ if (-not $SkipSystemInstall) {
   Write-Step "1/6" "检测并安装系统依赖 (Node / Git / VS Code / Codex 桌面 App)"
   if (-not (Test-Command winget)) { throw "未找到 winget，请先从 Microsoft Store 装「应用安装程序」。" }
   $nm = Get-NodeMajor
-  if ($nm -lt 18) { Ensure-WingetPackage "OpenJS.NodeJS.LTS" "Node.js LTS" } else { Write-Ok "Node $(node -v) 已够新" }
+  if ($nm -lt 18) { Ensure-WingetPackage "OpenJS.NodeJS.LTS" "Node.js LTS" } else {
+    Show-CheckBar "Node $(node -v)" 900
+    Write-Ok "Node $(node -v) 已够新"
+  }
   Refresh-Path
   if (-not (Test-Command node)) { throw "Node 安装后仍不可用，请重开终端再跑。" }
   Ensure-WingetPackage "Git.Git" "Git"
