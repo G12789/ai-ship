@@ -264,11 +264,37 @@ function Invoke-NpmInstall([string]$Pkg, [string]$Label) {
 }
 
 function Read-SecureText([string]$Prompt) {
-  $sec = Read-Host -Prompt $Prompt -AsSecureString
-  if (-not $sec -or $sec.Length -eq 0) { return "" }
-  $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($sec)
-  try { return ([Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr)).Trim() }
-  finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }
+  # 掩码输入，但支持 Ctrl+V / 右键粘贴（从剪贴板取文本）。
+  # 修复：Read-Host -AsSecureString 下按 Ctrl+V 会把 0x16 控制字符当成 Key，导致密钥失效。
+  Write-Host -NoNewline ($Prompt + ": ")
+  $canReadKey = $true
+  try { $null = [Console]::KeyAvailable } catch { $canReadKey = $false }
+  if (-not $canReadKey) {
+    # 非交互控制台兜底：普通读入（仍可粘贴，只是不掩码）
+    $line = [Console]::ReadLine()
+    if ($null -eq $line) { return "" }
+    return $line.Trim()
+  }
+  $buf = New-Object System.Text.StringBuilder
+  while ($true) {
+    $k = [Console]::ReadKey($true)
+    if ($k.Key -eq [ConsoleKey]::Enter) { Write-Host ""; break }
+    elseif ($k.Key -eq [ConsoleKey]::Backspace) {
+      if ($buf.Length -gt 0) { $buf.Length--; Write-Host -NoNewline "`b `b" }
+    }
+    elseif ($k.KeyChar -eq [char]0x16 -or (($k.Modifiers -band [ConsoleModifiers]::Control) -and $k.Key -eq [ConsoleKey]::V)) {
+      $clip = ""
+      try { $clip = (Get-Clipboard -Raw -ErrorAction SilentlyContinue) } catch { }
+      if ($clip) {
+        $clip = ($clip -replace "[`r`n`t ]", "")
+        if ($clip) { [void]$buf.Append($clip); Write-Host -NoNewline ("*" * $clip.Length) }
+      }
+    }
+    elseif ([int]$k.KeyChar -ge 32) {
+      [void]$buf.Append($k.KeyChar); Write-Host -NoNewline "*"
+    }
+  }
+  return $buf.ToString().Trim()
 }
 function Read-ApiKey([string]$Prompt, [string]$Existing = "", [switch]$Optional) {
   if ($Existing) {
@@ -351,9 +377,24 @@ function Start-CodexDesktopApp {
 }
 
 function Test-CodexProxyRunning {
+  # 此代理只提供 /v1/responses；/v1/models 会返回 404。
+  # 只有连不上时 curl 才返回 000。所以「非 000」即视为代理已在跑。
   try {
     $code = (& curl.exe -s -o NUL -w "%{http_code}" --max-time 3 "http://127.0.0.1:$ProxyPort/v1/models" 2>$null)
-    return ($code -eq "200")
+    return ($code -and $code -ne "000")
+  } catch { return $false }
+}
+
+function Test-CodexUpstream {
+  # 真实连通性测试：给上游发一条最小请求，验证 Key/模型可用（录屏里可显示成功）。
+  $probe = [ordered]@{
+    model  = "deepseek-v4-pro"
+    input  = @([ordered]@{ role = "user"; content = @([ordered]@{ type = "input_text"; text = "ping" }) })
+    stream = $false
+  } | ConvertTo-Json -Depth 12
+  try {
+    $null = Invoke-RestMethod -Uri "http://127.0.0.1:$ProxyPort/v1/responses" -Method Post -ContentType "application/json" -Body $probe -TimeoutSec 60 -ErrorAction Stop
+    return $true
   } catch { return $false }
 }
 
@@ -434,38 +475,43 @@ function Get-CodexProxyEnsureBatContent([switch]$SilentOnly) {
   if ($SilentOnly) {
     return @"
 @echo off
-curl -s -o NUL -w "%%{http_code}" --max-time 3 http://127.0.0.1:$ProxyPort/v1/models 2>nul | findstr /x "200" >nul
-if not errorlevel 1 exit /b 0
+call :probe
+if "%READY%"=="1" exit /b 0
 start "Codex Proxy BG" /min cmd /c npx --yes @codeproxy/cli --config "$ProxyConfigBat" --host 127.0.0.1 --port $ProxyPort
 set /a tries=0
 :wait
 ping -n 2 127.0.0.1 >nul
-curl -s -o NUL -w "%%{http_code}" --max-time 3 http://127.0.0.1:$ProxyPort/v1/models 2>nul | findstr /x "200" >nul
-if not errorlevel 1 exit /b 0
+call :probe
+if "%READY%"=="1" exit /b 0
 set /a tries+=1
 if %tries% lss 45 goto wait
 exit /b 1
+:probe
+set "READY=0"
+for /f "delims=" %%C in ('curl -s -o NUL -w "%%{http_code}" --max-time 3 http://127.0.0.1:$ProxyPort/v1/models 2^>nul') do set "CODE=%%C"
+if not "%CODE%"=="000" if not "%CODE%"=="" set "READY=1"
+exit /b 0
 "@
   }
   return @"
 @echo off
 chcp 65001 >nul
 if /I "%~1"=="silent" goto run
-curl -s -o NUL -w "%%{http_code}" --max-time 3 http://127.0.0.1:$ProxyPort/v1/models 2>nul | findstr /x "200" >nul
-if not errorlevel 1 (
+call :probe
+if "%READY%"=="1" (
   echo Codex proxy already running on 127.0.0.1:$ProxyPort
   timeout /t 2 >nul
   exit /b 0
 )
 :run
-curl -s -o NUL -w "%%{http_code}" --max-time 3 http://127.0.0.1:$ProxyPort/v1/models 2>nul | findstr /x "200" >nul
-if not errorlevel 1 exit /b 0
+call :probe
+if "%READY%"=="1" exit /b 0
 start "Codex Proxy BG" /min cmd /c npx --yes @codeproxy/cli --config "$ProxyConfigBat" --host 127.0.0.1 --port $ProxyPort
 set /a tries=0
 :wait
 ping -n 2 127.0.0.1 >nul
-curl -s -o NUL -w "%%{http_code}" --max-time 3 http://127.0.0.1:$ProxyPort/v1/models 2>nul | findstr /x "200" >nul
-if not errorlevel 1 goto done
+call :probe
+if "%READY%"=="1" goto done
 set /a tries+=1
 if %tries% lss 45 goto wait
 echo [ERROR] Proxy not ready on 127.0.0.1:$ProxyPort
@@ -475,6 +521,11 @@ if /I not "%~1"=="silent" (
   echo Proxy ready. You can open Codex App or VS Code now.
   timeout /t 2 >nul
 )
+exit /b 0
+:probe
+set "READY=0"
+for /f "delims=" %%C in ('curl -s -o NUL -w "%%{http_code}" --max-time 3 http://127.0.0.1:$ProxyPort/v1/models 2^>nul') do set "CODE=%%C"
+if not "%CODE%"=="000" if not "%CODE%"=="" set "READY=1"
 exit /b 0
 "@
 }
@@ -663,7 +714,7 @@ pause >nul
   }
   if ($KimiKey) { $kk = $KimiKey.Trim(); Write-Skip "Kimi Key 由参数传入" }
   else {
-    Write-Host "  获取 Kimi Coding Key: https://platform.moonshot.cn/ (api.kimi.com coding)" -ForegroundColor DarkGray
+    Write-Host "  获取 Kimi Coding Key: https://www.kimi.com/code （可选，仅贴图识图用）" -ForegroundColor DarkGray
     $kk = Read-ApiKey "Kimi Coding API Key" -Optional
   }
 
@@ -892,12 +943,20 @@ if ($Source -eq "official") {
 }
 Write-Host ""
 
-# ─── 装完：确保代理在跑 → 打开 Codex 桌面 App + VS Code ───
+# ─── 装完：确保代理在跑 → 测试模型连接 → 打开 Codex 桌面 App + VS Code ───
 if ($Source -ne "official") {
   if (Ensure-CodexProxyRunning) {
-    Write-Ok "本地代理已就绪（127.0.0.1:$ProxyPort HTTP 200）；重启后也会自动起"
+    Write-Ok "本地代理已就绪（127.0.0.1:$ProxyPort）；重启后也会自动起"
+    Write-Host "  正在测试模型连接（DeepSeek）..." -ForegroundColor White
+    if (Test-CodexUpstream) {
+      Write-Host ""
+      Write-Host "  ✓ 模型连接成功！可以直接开始用 Codex 了。" -ForegroundColor Green
+      Write-Host ""
+    } else {
+      Write-Warn "代理已起但模型没响应：多半是 API Key 复制错/含空格、或账户余额为 0。请核对 DeepSeek Key 后重试。"
+    }
   } else {
-    Write-Warn "代理未能就绪 → 502 请双击桌面「Codex 代理修复」"
+    Write-Warn "代理未能就绪，请双击桌面「Codex 代理修复」再重试"
   }
 }
 
@@ -923,3 +982,4 @@ if ($vscodeOpen -and -not $NoExtension) {
 Write-Host ""
 Write-Host "  重要：请用桌面「Codex 一键启动」，不要单独开 Codex App（否则可能 502）" -ForegroundColor Yellow
 Write-Host ""
+
